@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/trade-svgrepo-com.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="ElectroShop - Your electronics e-commerce store" />
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#000000" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ElectroShop" />
+    
+    <!-- Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- Icons - Using SVG directly -->
+    <link rel="apple-touch-icon" href="/trade-svgrepo-com.svg" />
+    <link rel="shortcut icon" href="/trade-svgrepo-com.svg" />
+    <link rel="icon" type="image/svg+xml" href="/trade-svgrepo-com.svg" />
+    
+    <title>ElectroShop - Electronics Store</title>
+    
+    <style>
+      /* Simple loading style */
+      .app-loading {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        font-family: Arial, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="app-loading">
+        Loading ElectroShop...
+      </div>
+    </div>
+    
+    <script>
+      // Service worker registration
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js')
+            .then(function(registration) {
+              console.log('SW registered successfully: ', registration.scope);
+            })
+            .catch(function(registrationError) {
+              console.log('SW registration failed: ', registrationError);
+            });
+        });
+      }
+
+      // PWA detection
+      if (window.matchMedia('(display-mode: standalone)').matches) {
+        console.log('Running as installed PWA');
+        document.documentElement.classList.add('pwa-mode');
+      }
+    </script>
+    
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
