@@ -1,9 +1,9 @@
 import axios from 'axios';
 
 // Configuration - UPDATED FOR PRODUCTION
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-const DEFAULT_TIMEOUT = 80000;
-const HEALTH_CHECK_TIMEOUT = 40000;
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://kiwa.onrender.com/api';
+const DEFAULT_TIMEOUT = 30000; // Reduced from 80000ms for better UX
+const HEALTH_CHECK_TIMEOUT = 10000; // Reduced from 40000ms
 
 console.log('🚀 Using API URL:', API_BASE_URL);
 console.log('🌍 Environment:', import.meta.env.MODE);
@@ -56,12 +56,12 @@ api.interceptors.response.use(
     switch (true) {
       case error.code === 'ECONNABORTED':
         userMessage = isProduction 
-          ? 'Request timeout - Please try again later'
-          : 'Request timeout - Backend server is not responding. Please ensure the server is running';
+          ? 'Request timeout - Backend server might be spinning up. Please try again in 30 seconds.'
+          : 'Request timeout - Please check if the backend server is running.';
         break;
       case !error.response:
         userMessage = isProduction
-          ? 'Cannot connect to server. Please check your internet connection.'
+          ? 'Cannot connect to backend server. The server might be temporarily unavailable.'
           : `Cannot connect to backend server at ${API_BASE_URL}. Please check if the server is running.`;
         break;
       case error.response.status === 401:
