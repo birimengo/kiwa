@@ -239,24 +239,37 @@ const ProductCard = ({ product }) => {
         </div>
       </div>
 
-      {/* Image Navigation Arrows */}
+      {/* Image Navigation Arrows - ALWAYS VISIBLE ON MOBILE, HOVER ON DESKTOP */}
       {hasMultipleImages && (
         <>
           <button
             onClick={prevImage}
-            className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition-all z-20 opacity-0 group-hover:opacity-100 backdrop-blur-sm shadow-lg"
+            className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/70 text-white p-2 rounded-full hover:bg-black/90 transition-all z-20 
+                       backdrop-blur-sm shadow-lg
+                       /* Mobile: always visible, Desktop: show on hover */
+                       opacity-100 md:opacity-0 md:group-hover:opacity-100
+                       /* Mobile: larger touch targets */
+                       p-2.5 md:p-2"
           >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <button
-            onClick={nextImage}
-            className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition-all z-20 opacity-0 group-hover:opacity-100 backdrop-blur-sm shadow-lg"
-          >
-            <ChevronRight className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4 md:h-4 md:w-4" />
           </button>
           
-          {/* Image Indicators */}
-          <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 flex gap-1.5 z-20">
+          <button
+            onClick={nextImage}
+            className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/70 text-white p-2 rounded-full hover:bg-black/90 transition-all z-20 
+                       backdrop-blur-sm shadow-lg
+                       /* Mobile: always visible, Desktop: show on hover */
+                       opacity-100 md:opacity-0 md:group-hover:opacity-100
+                       /* Mobile: larger touch targets */
+                       p-2.5 md:p-2"
+          >
+            <ChevronRight className="h-4 w-4 md:h-4 md:w-4" />
+          </button>
+          
+          {/* Image Indicators - ALWAYS VISIBLE ON MOBILE, HOVER ON DESKTOP */}
+          <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 flex gap-1.5 z-20
+                         /* Mobile: always visible, Desktop: show on hover */
+                         opacity-100 md:opacity-0 md:group-hover:opacity-100">
             {product.images.map((_, index) => (
               <button
                 key={index}
@@ -272,6 +285,13 @@ const ProductCard = ({ product }) => {
                 }`}
               />
             ))}
+          </div>
+
+          {/* Image Counter - ALWAYS VISIBLE ON MOBILE, HOVER ON DESKTOP */}
+          <div className="absolute top-3 left-3 bg-black/70 text-white text-xs px-2 py-1 rounded-full font-medium z-20 backdrop-blur-sm shadow-lg
+                         /* Mobile: always visible, Desktop: show on hover */
+                         opacity-100 md:opacity-0 md:group-hover:opacity-100">
+            {currentImageIndex + 1} / {product.images.length}
           </div>
         </>
       )}
