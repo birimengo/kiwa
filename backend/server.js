@@ -9,14 +9,28 @@ dotenv.config();
 const connectDB = require('./config/database');
 connectDB();
 
-
 const app = express();
 const orderRoutes = require('./routes/orders');
 
+// CORS configuration - UPDATED FOR LOCAL DEVELOPMENT
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173', // Add this for Vite dev server
+  'https://kiwa-general-electricals.vercel.app'
+];
 
-// CORS configuration
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('Blocked by CORS:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 
@@ -32,6 +46,7 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/orders', orderRoutes);
+
 // Health check route
 app.get('/api/health', (req, res) => {
   res.json({
@@ -86,8 +101,8 @@ app.get('/api', (req, res) => {
   });
 });
 
-// Handle undefined routes - SIMPLIFIED VERSION
-app.use((req, res) => {
+// Handle undefined routes
+app.use((req, res, next) => {
   res.status(404).json({
     success: false,
     message: `Route not found: ${req.method} ${req.originalUrl}`
@@ -155,4 +170,5 @@ app.listen(PORT, () => {
   console.log(`🌐 MongoDB: Connected to Atlas cluster`);
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
   console.log(`📚 API Docs: http://localhost:${PORT}/api`);
+  console.log(`✅ CORS enabled for: ${allowedOrigins.join(', ')}`);
 });

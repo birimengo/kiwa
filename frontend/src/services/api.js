@@ -1,11 +1,12 @@
 import axios from 'axios';
 
-// Configuration
-const API_BASE_URL = 'http://localhost:5000/api';
+// Configuration - UPDATED FOR PRODUCTION
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 const DEFAULT_TIMEOUT = 80000;
 const HEALTH_CHECK_TIMEOUT = 40000;
 
 console.log('🚀 Using API URL:', API_BASE_URL);
+console.log('🌍 Environment:', import.meta.env.MODE);
 
 // Axios instance configuration
 const api = axios.create({
@@ -32,7 +33,7 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor
+// Response interceptor - UPDATED FOR PRODUCTION
 api.interceptors.response.use(
   (response) => {
     console.log(`✅ API Response: ${response.config.url} ${response.status}`);
@@ -48,15 +49,20 @@ api.interceptors.response.use(
     
     console.error('❌ API Error:', errorDetails);
     
-    // Enhanced error handling
+    // Enhanced error handling for production
     let userMessage = error.message;
+    const isProduction = import.meta.env.PROD;
     
     switch (true) {
       case error.code === 'ECONNABORTED':
-        userMessage = 'Request timeout - Backend server is not responding. Please ensure the server is running on http://localhost:5000';
+        userMessage = isProduction 
+          ? 'Request timeout - Please try again later'
+          : 'Request timeout - Backend server is not responding. Please ensure the server is running';
         break;
       case !error.response:
-        userMessage = 'Cannot connect to backend server. Please check if the server is running and accessible.';
+        userMessage = isProduction
+          ? 'Cannot connect to server. Please check your internet connection.'
+          : `Cannot connect to backend server at ${API_BASE_URL}. Please check if the server is running.`;
         break;
       case error.response.status === 401:
         localStorage.removeItem('token');
@@ -108,7 +114,7 @@ const validateId = (id, entityName = 'Resource') => {
   }
 };
 
-// Connection Testing
+// Enhanced Connection Testing for Production
 export const testBackendConnection = async () => {
   try {
     console.log('🔌 Testing connection to:', API_BASE_URL);
@@ -117,14 +123,18 @@ export const testBackendConnection = async () => {
     return {
       connected: true,
       status: response.status,
-      data: response.data
+      data: response.data,
+      environment: import.meta.env.MODE,
+      baseURL: API_BASE_URL
     };
   } catch (error) {
     console.error('❌ Backend connection test failed:', error.message);
     return {
       connected: false,
       error: error.message,
-      status: error.response?.status
+      status: error.response?.status,
+      environment: import.meta.env.MODE,
+      baseURL: API_BASE_URL
     };
   }
 };
@@ -195,7 +205,7 @@ const createApiMethods = (endpoint, config = {}) => {
   return methods;
 };
 
-// Products API Configuration - KEEP ORIGINAL METHOD NAMES FOR BACKWARD COMPATIBILITY
+// Products API Configuration
 const productsConfig = {
   requiredFields: ['name', 'brand', 'sellingPrice'],
   customValidations: {
@@ -268,7 +278,7 @@ export const productsAPI = {
   }
 };
 
-// Sales API Configuration - KEEP ORIGINAL METHOD NAMES
+// Sales API Configuration
 const salesConfig = {
   requiredFields: ['items'],
   customValidations: {
@@ -315,7 +325,7 @@ export const salesAPI = {
   }
 };
 
-// Auth API Configuration - KEEP ORIGINAL METHOD NAMES
+// Auth API Configuration
 const authConfig = {
   requiredFields: ['email', 'password'],
   idRequired: false
@@ -348,7 +358,7 @@ export const authAPI = {
   }
 };
 
-// Cart API Configuration - KEEP ORIGINAL METHOD NAMES
+// Cart API Configuration
 const cartConfig = {
   idRequired: false
 };
@@ -377,7 +387,7 @@ export const cartAPI = {
   }
 };
 
-// Orders API - KEEP ORIGINAL METHOD NAMES
+// Orders API
 const baseOrdersAPI = createApiMethods('orders');
 
 export const ordersAPI = {
@@ -478,7 +488,8 @@ export const getApiStatus = async () => {
     connected: connection.connected,
     status: connection.status,
     error: connection.error,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    environment: import.meta.env.MODE
   };
 };
 
