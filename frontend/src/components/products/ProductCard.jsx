@@ -140,54 +140,54 @@ const ProductCard = ({ product }) => {
             </p>
           </div>
 
-          {/* Like Button */}
+          {/* Like Button - Reduced size */}
           <button
             onClick={handleLike}
             disabled={loading}
-            className={`p-2 rounded-full backdrop-blur-sm transition-all ${
+            className={`p-1.5 rounded-full backdrop-blur-sm transition-all ${
               isLiked 
                 ? 'bg-red-500 text-white shadow-lg' 
                 : 'bg-black/30 text-white hover:bg-black/50'
             } hover:scale-110 shadow-lg`}
           >
-            <Heart className={`h-4 w-4 ${isLiked ? 'fill-current' : ''}`} />
+            <Heart className={`h-3.5 w-3.5 ${isLiked ? 'fill-current' : ''}`} />
           </button>
         </div>
 
         {/* Rating and Comments */}
         <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <div className="flex [&_svg]:[filter:drop-shadow(0_1px_2px_rgb(0_0_0_/_80%))]">
               {[...Array(5)].map((_, i) => (
                 <Star
                   key={i}
-                  className={`h-3.5 w-3.5 text-yellow-400 ${
+                  className={`h-3 w-3 text-yellow-400 ${
                     i < Math.floor(product.averageRating || 0) ? 'fill-current' : ''
                   }`}
                 />
               ))}
             </div>
-            <span className="text-white [text-shadow:_0_1px_2px_rgb(0_0_0_/_80%)] text-sm font-medium">
+            <span className="text-white [text-shadow:_0_1px_2px_rgb(0_0_0_/_80%)] text-xs font-medium">
               ({product.comments?.length || 0})
             </span>
           </div>
           
           {/* Like Count */}
           {likeCount > 0 && (
-            <span className="bg-blue-600 text-white text-xs px-2 py-1 rounded-full font-medium shadow-lg [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)]">
+            <span className="bg-blue-600 text-white text-xs px-1.5 py-0.5 rounded-full font-medium shadow-lg [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)]">
               {likeCount} likes
             </span>
           )}
         </div>
 
         {/* Middle Section - Price and Stock */}
-        <div className="text-center mb-4">
-          <p className="text-2xl font-bold mb-2 text-white [text-shadow:_0_2px_4px_rgb(0_0_0_/_90%)]">
+        <div className="text-center mb-3">
+          <p className="text-2xl font-bold mb-1 text-white [text-shadow:_0_2px_4px_rgb(0_0_0_/_90%)]">
             UGX {product.sellingPrice?.toLocaleString()}
           </p>
           
           {/* Stock Status */}
-          <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold backdrop-blur-sm shadow-lg [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)] ${
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold backdrop-blur-sm shadow-lg [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)] ${
             product.stock > 10 ? 'bg-green-600 text-white' : 
             product.stock > 0 ? 'bg-yellow-600 text-white' : 
             'bg-red-600 text-white'
@@ -197,77 +197,73 @@ const ProductCard = ({ product }) => {
         </div>
 
         {/* Bottom Section - Action Buttons */}
-        <div className="space-y-2">
-          {/* Action Buttons */}
-          <div className="grid grid-cols-3 gap-2">
+        <div className="space-y-1.5">
+          {/* Action Buttons - Reduced size */}
+          <div className="grid grid-cols-3 gap-1.5">
             <button
               onClick={handleAddToCart}
               disabled={!product.stock || product.stock === 0}
-              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white px-2 py-2 rounded-lg text-sm font-semibold transition-all hover:scale-105 backdrop-blur-sm flex items-center justify-center gap-1 shadow-lg [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)]"
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white px-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:scale-105 backdrop-blur-sm flex items-center justify-center gap-0.5 shadow-lg [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)]"
             >
-              <ShoppingCart className="h-4 w-4" />
+              <ShoppingCart className="h-3.5 w-3.5" />
               <span>Cart</span>
             </button>
 
             <button
               onClick={handleWhatsApp}
-              className="bg-green-600 hover:bg-green-700 text-white px-2 py-2 rounded-lg text-sm font-semibold transition-all hover:scale-105 backdrop-blur-sm flex items-center justify-center gap-1 shadow-lg [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)]"
+              className="bg-green-600 hover:bg-green-700 text-white px-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:scale-105 backdrop-blur-sm flex items-center justify-center gap-0.5 shadow-lg [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)]"
             >
-              <MessageCircle className="h-4 w-4" />
+              <MessageCircle className="h-3.5 w-3.5" />
               <span>Chat</span>
             </button>
 
             <button
               onClick={handleCall}
-              className="bg-purple-600 hover:bg-purple-700 text-white px-2 py-2 rounded-lg text-sm font-semibold transition-all hover:scale-105 backdrop-blur-sm flex items-center justify-center gap-1 shadow-lg [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)]"
+              className="bg-purple-600 hover:bg-purple-700 text-white px-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all hover:scale-105 backdrop-blur-sm flex items-center justify-center gap-0.5 shadow-lg [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)]"
             >
-              <Phone className="h-4 w-4" />
+              <Phone className="h-3.5 w-3.5" />
               <span>Call</span>
             </button>
           </div>
 
-          {/* Comments Link */}
+          {/* Comments Link - Reduced size */}
           {product.comments && product.comments.length > 0 && (
             <button
               onClick={handleCommentClick}
-              className="w-full bg-black/30 hover:bg-black/50 text-white text-sm font-medium py-2 rounded-lg transition-all backdrop-blur-sm flex items-center justify-center gap-2 shadow-lg hover:scale-105 [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)]"
+              className="w-full bg-black/30 hover:bg-black/50 text-white text-xs font-medium py-1.5 rounded-lg transition-all backdrop-blur-sm flex items-center justify-center gap-1 shadow-lg hover:scale-105 [text-shadow:_0_1px_1px_rgb(0_0_0_/_50%)]"
             >
-              <MessageCircle className="h-4 w-4" />
+              <MessageCircle className="h-3 w-3" />
               <span>View {product.comments.length} Comments</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Image Navigation Arrows - ALWAYS VISIBLE ON MOBILE, HOVER ON DESKTOP */}
+      {/* Image Navigation Arrows - Reduced size */}
       {hasMultipleImages && (
         <>
           <button
             onClick={prevImage}
-            className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/70 text-white p-2 rounded-full hover:bg-black/90 transition-all z-20 
+            className="absolute left-1 top-1/2 transform -translate-y-1/2 bg-black/70 text-white p-1 rounded-full hover:bg-black/90 transition-all z-20 
                        backdrop-blur-sm shadow-lg
                        /* Mobile: always visible, Desktop: show on hover */
-                       opacity-100 md:opacity-0 md:group-hover:opacity-100
-                       /* Mobile: larger touch targets */
-                       p-2.5 md:p-2"
+                       opacity-100 md:opacity-0 md:group-hover:opacity-100"
           >
-            <ChevronLeft className="h-4 w-4 md:h-4 md:w-4" />
+            <ChevronLeft className="h-3 w-3" />
           </button>
           
           <button
             onClick={nextImage}
-            className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/70 text-white p-2 rounded-full hover:bg-black/90 transition-all z-20 
+            className="absolute right-1 top-1/2 transform -translate-y-1/2 bg-black/70 text-white p-1 rounded-full hover:bg-black/90 transition-all z-20 
                        backdrop-blur-sm shadow-lg
                        /* Mobile: always visible, Desktop: show on hover */
-                       opacity-100 md:opacity-0 md:group-hover:opacity-100
-                       /* Mobile: larger touch targets */
-                       p-2.5 md:p-2"
+                       opacity-100 md:opacity-0 md:group-hover:opacity-100"
           >
-            <ChevronRight className="h-4 w-4 md:h-4 md:w-4" />
+            <ChevronRight className="h-3 w-3" />
           </button>
           
-          {/* Image Indicators - ALWAYS VISIBLE ON MOBILE, HOVER ON DESKTOP */}
-          <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 flex gap-1.5 z-20
+          {/* Image Indicators - Reduced size */}
+          <div className="absolute bottom-16 left-1/2 transform -translate-x-1/2 flex gap-1 z-20
                          /* Mobile: always visible, Desktop: show on hover */
                          opacity-100 md:opacity-0 md:group-hover:opacity-100">
             {product.images.map((_, index) => (
@@ -278,7 +274,7 @@ const ProductCard = ({ product }) => {
                   e.stopPropagation();
                   setCurrentImageIndex(index);
                 }}
-                className={`w-2 h-2 rounded-full transition-all shadow-lg ${
+                className={`w-1.5 h-1.5 rounded-full transition-all shadow-lg ${
                   index === currentImageIndex
                     ? 'bg-white scale-125'
                     : 'bg-white/70 hover:bg-white'
@@ -287,8 +283,8 @@ const ProductCard = ({ product }) => {
             ))}
           </div>
 
-          {/* Image Counter - ALWAYS VISIBLE ON MOBILE, HOVER ON DESKTOP */}
-          <div className="absolute top-3 left-3 bg-black/70 text-white text-xs px-2 py-1 rounded-full font-medium z-20 backdrop-blur-sm shadow-lg
+          {/* Image Counter - Reduced size */}
+          <div className="absolute top-2 left-2 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded-full font-medium z-20 backdrop-blur-sm shadow-lg
                          /* Mobile: always visible, Desktop: show on hover */
                          opacity-100 md:opacity-0 md:group-hover:opacity-100">
             {currentImageIndex + 1} / {product.images.length}

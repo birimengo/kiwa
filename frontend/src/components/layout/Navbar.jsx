@@ -109,8 +109,13 @@ const Navbar = () => {
             className="flex items-center space-x-2 flex-shrink-0"
             onClick={closeMobileMenu}
           >
-            <div className="w-7 h-7 theme-primary rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-xs">E</span>
+            {/* SVG Logo */}
+            <div className="w-8 h-8 flex items-center justify-center">
+              <img 
+                src="/trade-svgrepo-com.svg" 
+                alt="ElectroShop Logo" 
+                className="w-6 h-6 theme-primary-filter"
+              />
             </div>
             <span className="text-lg font-bold theme-text">
               ElectroShop
@@ -220,7 +225,7 @@ const Navbar = () => {
                           value={adminInput}
                           onChange={handleAdminInputChange}
                           onKeyPress={handleAdminInputKeyPress}
-                          placeholder="Type 'admin' for admin access"
+                          placeholder="......"
                           className="w-full px-2 py-1.5 text-sm theme-border rounded theme-bg theme-text focus:outline-none focus:ring-2 focus:ring-blue-500"
                           autoFocus
                         />
