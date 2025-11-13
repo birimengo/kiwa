@@ -1,8 +1,56 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { HelpCircle } from 'lucide-react';
 
 const ManualInstall = () => {
   const [showInstructions, setShowInstructions] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
+
+  // Check if app is running in standalone mode (installed)
+  useEffect(() => {
+    const checkDisplayMode = () => {
+      // Method 1: Check if running in standalone mode
+      if (window.matchMedia('(display-mode: standalone)').matches) {
+        setIsStandalone(true);
+        return;
+      }
+
+      // Method 2: Check if running as PWA on iOS
+      if (window.navigator.standalone === true) {
+        setIsStandalone(true);
+        return;
+      }
+
+      // Method 3: Check for other PWA indicators
+      if (window.location.search.includes('mode=standalone')) {
+        setIsStandalone(true);
+        return;
+      }
+
+      // Method 4: Check if launched from home screen (mobile detection)
+      if (window.screen.height - window.innerHeight < 50) {
+        setIsStandalone(true);
+      }
+    };
+
+    checkDisplayMode();
+
+    // Listen for display mode changes
+    const mediaQuery = window.matchMedia('(display-mode: standalone)');
+    const handleChange = (e) => {
+      setIsStandalone(e.matches);
+    };
+
+    mediaQuery.addEventListener('change', handleChange);
+    
+    return () => {
+      mediaQuery.removeEventListener('change', handleChange);
+    };
+  }, []);
+
+  // Don't render anything if app is installed
+  if (isStandalone) {
+    return null;
+  }
 
   return (
     <div className="fixed bottom-4 left-4 z-40">
