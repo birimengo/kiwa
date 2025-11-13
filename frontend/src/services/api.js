@@ -1,12 +1,17 @@
 import axios from 'axios';
 
-// Configuration - UPDATED FOR PRODUCTION
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://kiwa.onrender.com/api';
-const DEFAULT_TIMEOUT = 30000; // Reduced from 80000ms for better UX
-const HEALTH_CHECK_TIMEOUT = 10000; // Reduced from 40000ms
+// Configuration - WITH PROXY FIX
+const isDevelopment = import.meta.env.DEV;
+const API_BASE_URL = isDevelopment 
+  ? '/api' // Use proxy in development
+  : 'https://kiwa.onrender.com/api'; // Direct in production
+
+const DEFAULT_TIMEOUT = 30000; // Reduced from 100000ms
+const HEALTH_CHECK_TIMEOUT = 10000; // Reduced from 50000ms
 
 console.log('🚀 Using API URL:', API_BASE_URL);
 console.log('🌍 Environment:', import.meta.env.MODE);
+console.log('🔧 Development mode:', isDevelopment);
 
 // Axios instance configuration
 const api = axios.create({
@@ -24,7 +29,12 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    console.log(`🔄 API Request: ${config.method?.toUpperCase()} ${config.url}`);
+    
+    // Log the full URL being called
+    const fullUrl = config.baseURL + config.url;
+    console.log(`🔄 API Request: ${config.method?.toUpperCase()} ${fullUrl}`);
+    console.log('🔧 Using proxy:', isDevelopment);
+    
     return config;
   },
   (error) => {
@@ -44,7 +54,8 @@ api.interceptors.response.use(
       url: error.config?.url,
       status: error.response?.status,
       message: error.response?.data?.message || error.message,
-      code: error.code
+      code: error.code,
+      baseURL: error.config?.baseURL
     };
     
     console.error('❌ API Error:', errorDetails);
@@ -57,12 +68,14 @@ api.interceptors.response.use(
       case error.code === 'ECONNABORTED':
         userMessage = isProduction 
           ? 'Request timeout - Backend server might be spinning up. Please try again in 30 seconds.'
-          : 'Request timeout - Please check if the backend server is running.';
+          : `Request timeout - The server is taking too long to respond. Using proxy: ${isDevelopment}`;
         break;
       case !error.response:
-        userMessage = isProduction
-          ? 'Cannot connect to backend server. The server might be temporarily unavailable.'
-          : `Cannot connect to backend server at ${API_BASE_URL}. Please check if the server is running.`;
+        if (isDevelopment) {
+          userMessage = `Cannot connect to backend via proxy. Check if backend is running at https://kiwa.onrender.com and proxy is configured.`;
+        } else {
+          userMessage = 'Cannot connect to backend server. The server might be temporarily unavailable.';
+        }
         break;
       case error.response.status === 401:
         localStorage.removeItem('token');
@@ -118,6 +131,8 @@ const validateId = (id, entityName = 'Resource') => {
 export const testBackendConnection = async () => {
   try {
     console.log('🔌 Testing connection to:', API_BASE_URL);
+    console.log('🔧 Using proxy:', isDevelopment);
+    
     const response = await api.get('/health', { timeout: HEALTH_CHECK_TIMEOUT });
     console.log('✅ Backend connection successful');
     return {
@@ -125,7 +140,8 @@ export const testBackendConnection = async () => {
       status: response.status,
       data: response.data,
       environment: import.meta.env.MODE,
-      baseURL: API_BASE_URL
+      baseURL: API_BASE_URL,
+      viaProxy: isDevelopment
     };
   } catch (error) {
     console.error('❌ Backend connection test failed:', error.message);
@@ -134,7 +150,8 @@ export const testBackendConnection = async () => {
       error: error.message,
       status: error.response?.status,
       environment: import.meta.env.MODE,
-      baseURL: API_BASE_URL
+      baseURL: API_BASE_URL,
+      viaProxy: isDevelopment
     };
   }
 };
@@ -489,7 +506,8 @@ export const getApiStatus = async () => {
     status: connection.status,
     error: connection.error,
     timestamp: new Date().toISOString(),
-    environment: import.meta.env.MODE
+    environment: import.meta.env.MODE,
+    viaProxy: isDevelopment
   };
 };
 

@@ -366,12 +366,17 @@ const ProductManagementTab = ({
     try {
       if (!formData.name.trim()) throw new Error('Product name is required');
       if (!formData.brand.trim()) throw new Error('Brand is required');
-      if (!formData.purchasePrice || parseFloat(formData.purchasePrice) < 0) throw new Error('Valid purchase price is required');
-      if (!formData.sellingPrice || parseFloat(formData.sellingPrice) < 0) throw new Error('Valid selling price is required');
-      if (parseFloat(formData.sellingPrice) <= parseFloat(formData.purchasePrice)) throw new Error('Selling price must be greater than purchase price');
+      
+      // For new products, validate prices and stock
+      if (!editingProduct) {
+        if (!formData.purchasePrice || parseFloat(formData.purchasePrice) < 0) throw new Error('Valid purchase price is required');
+        if (!formData.sellingPrice || parseFloat(formData.sellingPrice) < 0) throw new Error('Valid selling price is required');
+        if (parseFloat(formData.sellingPrice) <= parseFloat(formData.purchasePrice)) throw new Error('Selling price must be greater than purchase price');
+        if (!formData.stock || parseInt(formData.stock) < 0) throw new Error('Valid stock quantity is required');
+      }
+      
       if (!formData.category.trim()) throw new Error('Category is required');
       if (!formData.description.trim()) throw new Error('Description is required');
-      if (!formData.stock || parseInt(formData.stock) < 0) throw new Error('Valid stock quantity is required');
       if (!formData.lowStockAlert || parseInt(formData.lowStockAlert) < 0) throw new Error('Valid low stock alert level is required');
       if (imageFiles.length === 0 && (!editingProduct || !editingProduct.images || editingProduct.images.length === 0)) throw new Error('At least one image is required');
 
@@ -385,14 +390,18 @@ const ProductManagementTab = ({
       const productData = {
         name: formData.name.trim(),
         brand: formData.brand.trim(),
-        purchasePrice: parseFloat(formData.purchasePrice),
-        sellingPrice: parseFloat(formData.sellingPrice),
         category: formData.category.trim(),
         description: formData.description.trim(),
-        stock: parseInt(formData.stock),
         lowStockAlert: parseInt(formData.lowStockAlert),
         images: imageUrls
       };
+      
+      // Only include prices and stock for new products
+      if (!editingProduct) {
+        productData.purchasePrice = parseFloat(formData.purchasePrice);
+        productData.sellingPrice = parseFloat(formData.sellingPrice);
+        productData.stock = parseInt(formData.stock);
+      }
       
       if (editingProduct) {
         await productsAPI.updateProduct(editingProduct._id, productData);
@@ -433,11 +442,11 @@ const ProductManagementTab = ({
     setFormData({
       name: product.name || '',
       brand: product.brand || '',
-      purchasePrice: '', // Empty for edit - prices can only be changed in restock
-      sellingPrice: '', // Empty for edit - prices can only be changed in restock
+      purchasePrice: product.purchasePrice?.toString() || '', // Populate with current value
+      sellingPrice: product.sellingPrice?.toString() || '', // Populate with current value
       category: product.category || '',
       description: product.description || '',
-      stock: '', // Empty for edit - stock can only be changed in restock
+      stock: product.stock?.toString() || '', // Populate with current value
       lowStockAlert: product.lowStockAlert?.toString() || '5'
     });
     
@@ -1110,7 +1119,7 @@ const ProductManagementTab = ({
                 </div>
               </div>
 
-              {!editingProduct && (
+              {!editingProduct ? (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
                     <label className="block font-medium theme-text mb-1">Purchase Price *</label>
@@ -1159,6 +1168,47 @@ const ProductManagementTab = ({
                     />
                   </div>
                 </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 opacity-50">
+                  <div>
+                    <label className="block font-medium theme-text mb-1">Purchase Price</label>
+                    <div className="relative">
+                      <DollarSign className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3 w-3 theme-text-muted" />
+                      <input
+                        type="number"
+                        readOnly
+                        value={formData.purchasePrice}
+                        className="w-full pl-7 pr-3 py-2 theme-border border rounded-lg bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
+                        placeholder="Cost price"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-medium theme-text mb-1">Selling Price</label>
+                    <div className="relative">
+                      <Tag className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3 w-3 theme-text-muted" />
+                      <input
+                        type="number"
+                        readOnly
+                        value={formData.sellingPrice}
+                        className="w-full pl-7 pr-3 py-2 theme-border border rounded-lg bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
+                        placeholder="Selling price"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-medium theme-text mb-1">Current Stock</label>
+                    <input
+                      type="number"
+                      readOnly
+                      value={formData.stock}
+                      className="w-full px-3 py-2 theme-border border rounded-lg bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
+                      placeholder="Current quantity"
+                    />
+                  </div>
+                </div>
               )}
 
               {!editingProduct && formData.purchasePrice && formData.sellingPrice && (
@@ -1187,6 +1237,26 @@ const ProductManagementTab = ({
                     <p className="text-xs font-medium">
                       Note: Stock and prices can only be modified through the Restock function to maintain inventory accuracy.
                     </p>
+                  </div>
+                  
+                  {/* Show current values for reference */}
+                  <div className="grid grid-cols-2 gap-3 mt-2 text-xs">
+                    <div>
+                      <span className="theme-text-muted">Current Purchase Price:</span>
+                      <p className="font-semibold">UGX {editingProduct.purchasePrice?.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <span className="theme-text-muted">Current Selling Price:</span>
+                      <p className="font-semibold">UGX {editingProduct.sellingPrice?.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <span className="theme-text-muted">Current Stock:</span>
+                      <p className="font-semibold">{editingProduct.stock} units</p>
+                    </div>
+                    <div>
+                      <span className="theme-text-muted">Total Sold:</span>
+                      <p className="font-semibold">{editingProduct.totalSold || 0} units</p>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1323,4 +1393,4 @@ const ProductManagementTab = ({
   );
 };
 
-export default ProductManagementTab; 
+export default ProductManagementTab;
