@@ -480,8 +480,8 @@ const Products = () => {
                 ))}
               </select>
 
-              {/* View Mode Toggle */}
-              <div className="flex theme-border border rounded-lg overflow-hidden">
+              {/* View Mode Toggle - Hidden on mobile */}
+              <div className="hidden sm:flex theme-border border rounded-lg overflow-hidden">
                 <button
                   onClick={() => setViewMode('grid')}
                   className={`p-2 ${
