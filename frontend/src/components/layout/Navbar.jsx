@@ -429,7 +429,7 @@ const Navbar = () => {
                         value={adminInput}
                         onChange={handleAdminInputChange}
                         onKeyPress={handleAdminInputKeyPress}
-                        placeholder="Type 'admin' for admin access"
+                        placeholder=""
                         className="w-full px-2 py-1.5 text-sm theme-border rounded theme-bg theme-text focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                       {adminInput && (
