@@ -6,7 +6,7 @@ const API_BASE_URL = isDevelopment
   ? '/api' // Use proxy in development
   : 'https://kiwa.onrender.com/api'; // Direct in production
 
-const DEFAULT_TIMEOUT = 30000; // Reduced from 100000ms
+const DEFAULT_TIMEOUT = 30000; // Reduced from 400000ms
 const HEALTH_CHECK_TIMEOUT = 10000; // Reduced from 50000ms
 
 console.log('🚀 Using API URL:', API_BASE_URL);

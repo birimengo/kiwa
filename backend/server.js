@@ -12,32 +12,9 @@ connectDB();
 const app = express();
 const orderRoutes = require('./routes/orders');
 
-// CORS configuration - UPDATED FOR PRODUCTION
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'https://kiwa-general-electricals.vercel.app'
-];
-
-// Enhanced CORS configuration
+// SIMPLE CORS CONFIGURATION - ALLOW ALL ORIGINS
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, curl, server-to-server)
-    if (!origin) return callback(null, true);
-    
-    // In production, allow all origins for public access
-    if (process.env.NODE_ENV === 'production') {
-      return callback(null, true);
-    }
-    
-    // In development, restrict to allowed origins
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.log('Blocked by CORS in development:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: true, // Allow all origins in production and development
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
@@ -60,12 +37,13 @@ app.use('/api/orders', orderRoutes);
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
-    message: 'Server is running',
+    message: 'Server is running and accessible from all devices',
     timestamp: new Date().toISOString(),
     database: 'Connected to MongoDB Atlas',
     environment: process.env.NODE_ENV,
     version: '1.0.0',
-    cors: process.env.NODE_ENV === 'production' ? 'All origins allowed' : 'Development mode'
+    cors: 'All origins allowed',
+    clientOrigin: req.headers.origin || 'No origin header'
   });
 });
 
@@ -73,7 +51,7 @@ app.get('/api/health', (req, res) => {
 app.get('/api', (req, res) => {
   res.json({
     success: true,
-    message: 'Electronics Store API',
+    message: 'Electronics Store API - Accessible from all devices',
     version: '1.0.0',
     endpoints: {
       auth: {
@@ -122,16 +100,6 @@ app.use((req, res, next) => {
 // Error handling middleware
 app.use((error, req, res, next) => {
   console.error('Error:', error);
-  
-  // CORS error handling
-  if (error.message === 'Not allowed by CORS') {
-    return res.status(403).json({
-      success: false,
-      message: 'CORS Error: Origin not allowed',
-      allowedOrigins: allowedOrigins,
-      yourOrigin: req.headers.origin
-    });
-  }
   
   // Mongoose validation error
   if (error.name === 'ValidationError') {
@@ -186,9 +154,9 @@ app.use((error, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🌐 MongoDB: Connected to Atlas cluster`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`📚 API Docs: http://localhost:${PORT}/api`);
-  console.log(`✅ CORS: ${process.env.NODE_ENV === 'production' ? 'All origins allowed' : 'Restricted to: ' + allowedOrigins.join(', ')}`);
+  console.log(`🔗 Health check: https://kiwa.onrender.com/api/health`);
+  console.log(`✅ CORS: All origins allowed (all devices can access)`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV}`);
 });
