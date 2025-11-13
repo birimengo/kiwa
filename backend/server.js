@@ -12,26 +12,35 @@ connectDB();
 const app = express();
 const orderRoutes = require('./routes/orders');
 
-// CORS configuration - UPDATED FOR LOCAL DEVELOPMENT
+// CORS configuration - UPDATED FOR PRODUCTION
 const allowedOrigins = [
   'http://localhost:3000',
-  'http://localhost:5173', // Add this for Vite dev server
+  'http://localhost:5173',
   'https://kiwa-general-electricals.vercel.app'
 ];
 
+// Enhanced CORS configuration
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
+    // Allow requests with no origin (mobile apps, curl, server-to-server)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    // In production, allow all origins for public access
+    if (process.env.NODE_ENV === 'production') {
+      return callback(null, true);
+    }
+    
+    // In development, restrict to allowed origins
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.log('Blocked by CORS:', origin);
+      console.log('Blocked by CORS in development:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
 // Body parser middleware
@@ -55,7 +64,8 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     database: 'Connected to MongoDB Atlas',
     environment: process.env.NODE_ENV,
-    version: '1.0.0'
+    version: '1.0.0',
+    cors: process.env.NODE_ENV === 'production' ? 'All origins allowed' : 'Development mode'
   });
 });
 
@@ -112,6 +122,16 @@ app.use((req, res, next) => {
 // Error handling middleware
 app.use((error, req, res, next) => {
   console.error('Error:', error);
+  
+  // CORS error handling
+  if (error.message === 'Not allowed by CORS') {
+    return res.status(403).json({
+      success: false,
+      message: 'CORS Error: Origin not allowed',
+      allowedOrigins: allowedOrigins,
+      yourOrigin: req.headers.origin
+    });
+  }
   
   // Mongoose validation error
   if (error.name === 'ValidationError') {
@@ -170,5 +190,5 @@ app.listen(PORT, () => {
   console.log(`🌐 MongoDB: Connected to Atlas cluster`);
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
   console.log(`📚 API Docs: http://localhost:${PORT}/api`);
-  console.log(`✅ CORS enabled for: ${allowedOrigins.join(', ')}`);
+  console.log(`✅ CORS: ${process.env.NODE_ENV === 'production' ? 'All origins allowed' : 'Restricted to: ' + allowedOrigins.join(', ')}`);
 });
