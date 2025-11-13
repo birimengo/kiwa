@@ -11,26 +11,26 @@
   --color-border: #e5e7eb;
 }
 
-/* Dark Theme */
-.dark {
-  --color-bg: #111827;
-  --color-surface: #1f2937;
-  --color-text: #f9fafb;
-  --color-text-muted: #9ca3af;
-  --color-primary: #3b82f6;
-  --color-primary-hover: #2563eb;
-  --color-border: #374151;
+/* Dark Theme - make sure these are specific enough */
+html.dark {
+  --color-bg: #111827 !important;
+  --color-surface: #1f2937 !important;
+  --color-text: #f9fafb !important;
+  --color-text-muted: #9ca3af !important;
+  --color-primary: #3b82f6 !important;
+  --color-primary-hover: #2563eb !important;
+  --color-border: #374151 !important;
 }
 
 /* Ocean Theme */
-.ocean {
-  --color-bg: #dbeafe;
-  --color-surface: #ffffff;
-  --color-text: #1e3a8a;
-  --color-text-muted: #3b82f6;
-  --color-primary: #06b6d4;
-  --color-primary-hover: #0891b2;
-  --color-border: #93c5fd;
+html.ocean {
+  --color-bg: #dbeafe !important;
+  --color-surface: #ffffff !important;
+  --color-text: #1e3a8a !important;
+  --color-text-muted: #3b82f6 !important;
+  --color-primary: #06b6d4 !important;
+  --color-primary-hover: #0891b2 !important;
+  --color-border: #93c5fd !important;
 }
 
 /* Apply theme colors */

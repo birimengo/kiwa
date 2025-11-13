@@ -12,29 +12,51 @@ export const useTheme = () => {
 
 export const ThemeProvider = ({ children }) => {
   const [currentTheme, setCurrentTheme] = useState(() => {
+    // Check localStorage first, then system preference, default to dark
     const saved = localStorage.getItem('theme');
-    return saved ? JSON.parse(saved) : 'light';
+    if (saved) return JSON.parse(saved);
+    
+    // Check system preference
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      return 'dark';
+    }
+    
+    return 'dark'; // Final fallback to dark
   });
 
   useEffect(() => {
+    // Save to localStorage
     localStorage.setItem('theme', JSON.stringify(currentTheme));
     
-    // Remove all theme classes
-    const themes = ['light', 'dark', 'ocean'];
-    themes.forEach(theme => {
-      if (theme !== 'light') { // Don't remove 'light' as it's the default
-        document.documentElement.classList.remove(theme);
-      }
-    });
+    // Apply theme to document element
+    const root = document.documentElement;
     
-    // Add current theme class (only if it's not light)
-    if (currentTheme !== 'light') {
-      document.documentElement.classList.add(currentTheme);
-    } else {
-      // Ensure light theme is active by removing others
-      document.documentElement.classList.remove('dark', 'ocean');
-    }
+    // Remove all theme classes
+    root.classList.remove('light', 'dark', 'ocean');
+    
+    // Add current theme class
+    root.classList.add(currentTheme);
+    
+    // Also set data-theme attribute for additional CSS targeting
+    root.setAttribute('data-theme', currentTheme);
+    
   }, [currentTheme]);
+
+  // Optional: Listen for system theme changes
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    
+    const handleChange = (e) => {
+      // Only auto-switch if user hasn't explicitly chosen a theme
+      const saved = localStorage.getItem('theme');
+      if (!saved) {
+        setCurrentTheme(e.matches ? 'dark' : 'light');
+      }
+    };
+    
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
 
   const setTheme = (themeName) => {
     if (['light', 'dark', 'ocean'].includes(themeName)) {
