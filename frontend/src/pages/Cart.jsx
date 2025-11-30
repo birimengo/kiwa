@@ -18,6 +18,9 @@ const Cart = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
 
+  // Get API base URL from environment variables
+  const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://kiwa-8lrz.onrender.com/api';
+
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-UG', {
       style: 'currency',
@@ -48,7 +51,13 @@ const Cart = () => {
           const productId = item.product._id || item.product.id;
           if (!productId) throw new Error(`Invalid product ID for: ${item.product.name}`);
           
-          return { product: productId, quantity: item.quantity };
+          return { 
+            product: productId, 
+            quantity: item.quantity,
+            productName: item.product.name,
+            unitPrice: item.product.sellingPrice || item.product.price || 0,
+            totalPrice: (item.product.sellingPrice || item.product.price || 0) * item.quantity
+          };
         }),
         paymentMethod: checkoutData.paymentMethod,
         customerInfo: {
@@ -58,10 +67,15 @@ const Cart = () => {
           location: checkoutData.location
         },
         notes: checkoutData.notes,
-        shippingAddress: { street: checkoutData.location, city: 'Kampala', country: 'Uganda' }
+        shippingAddress: { 
+          street: checkoutData.location, 
+          city: 'Kampala', 
+          country: 'Uganda' 
+        },
+        totalAmount: getTotalPrice()
       };
 
-      const response = await fetch('http://localhost:5000/api/orders', {
+      const response = await fetch(`${API_BASE_URL}/orders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -70,7 +84,12 @@ const Cart = () => {
         body: JSON.stringify(orderData)
       });
 
-      if (!response.ok) throw new Error(`Server error: ${response.status}`);
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Authentication failed. Please login again.');
+        }
+        throw new Error(`Server error: ${response.status}`);
+      }
       
       const result = await response.json();
       if (result.success) {
@@ -86,6 +105,7 @@ const Cart = () => {
         setError(result.message || 'Failed to place order');
       }
     } catch (error) {
+      console.error('Checkout error:', error);
       setError(error.message || 'Failed to place order. Please try again.');
     } finally {
       setIsProcessing(false);
@@ -107,14 +127,33 @@ const Cart = () => {
     handleInputChange('phoneNumber', formattedPhone);
   };
 
+  // Theme-aware styling functions
+  const getThemeClasses = () => {
+    return {
+      bg: {
+        primary: 'bg-gray-50 dark:bg-gray-900 ocean:bg-gradient-to-br ocean:from-blue-900 ocean:via-blue-800 ocean:to-blue-700',
+      },
+      text: {
+        primary: 'text-gray-900 dark:text-white ocean:text-white',
+        secondary: 'text-gray-700 dark:text-gray-300 ocean:text-blue-100',
+        muted: 'text-gray-500 dark:text-gray-400 ocean:text-blue-200'
+      },
+      border: 'border-gray-200 dark:border-gray-700 ocean:border-blue-600',
+      surface: 'bg-white dark:bg-gray-800 ocean:bg-blue-800',
+      hover: 'hover:bg-gray-50 dark:hover:bg-gray-700 ocean:hover:bg-blue-700'
+    };
+  };
+
+  const themeClasses = getThemeClasses();
+
   // Empty state for non-logged in users
   if (!isLoggedIn) {
     return (
-      <div className="min-h-screen theme-bg flex items-center justify-center p-4">
+      <div className={`min-h-screen ${themeClasses.bg.primary} flex items-center justify-center p-4`}>
         <div className="text-center max-w-md">
-          <ShoppingBag className="h-12 w-12 theme-text-muted mx-auto mb-3" />
-          <h2 className="text-xl font-bold theme-text mb-2">Please Login</h2>
-          <p className="theme-text-muted mb-4 text-sm">You need to be logged in to view your cart.</p>
+          <ShoppingBag className={`h-12 w-12 ${themeClasses.text.muted} mx-auto mb-3`} />
+          <h2 className={`text-xl font-bold ${themeClasses.text.primary} mb-2`}>Please Login</h2>
+          <p className={`${themeClasses.text.muted} mb-4 text-sm`}>You need to be logged in to view your cart.</p>
           <button
             onClick={() => navigate('/login', { state: { from: '/cart' } })}
             className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium text-sm transition-colors"
@@ -129,11 +168,11 @@ const Cart = () => {
   // Empty cart state
   if (items.length === 0) {
     return (
-      <div className="min-h-screen theme-bg flex items-center justify-center p-4">
+      <div className={`min-h-screen ${themeClasses.bg.primary} flex items-center justify-center p-4`}>
         <div className="text-center max-w-md">
-          <ShoppingBag className="h-12 w-12 theme-text-muted mx-auto mb-3" />
-          <h2 className="text-xl font-bold theme-text mb-2">Your cart is empty</h2>
-          <p className="theme-text-muted mb-4 text-sm">Add some products to your cart to see them here.</p>
+          <ShoppingBag className={`h-12 w-12 ${themeClasses.text.muted} mx-auto mb-3`} />
+          <h2 className={`text-xl font-bold ${themeClasses.text.primary} mb-2`}>Your cart is empty</h2>
+          <p className={`${themeClasses.text.muted} mb-4 text-sm`}>Add some products to your cart to see them here.</p>
           <Link
             to="/products"
             className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium text-sm inline-block transition-colors"
@@ -146,24 +185,27 @@ const Cart = () => {
   }
 
   return (
-    <div className="min-h-screen theme-bg py-4">
+    <div className={`min-h-screen ${themeClasses.bg.primary} py-4`}>
       <div className="max-w-6xl mx-auto px-3 sm:px-4">
         {/* Mobile Header */}
         <div className="lg:hidden flex items-center gap-3 mb-4">
-          <button onClick={() => navigate(-1)} className="p-2 theme-text hover:theme-secondary rounded-lg">
+          <button 
+            onClick={() => navigate(-1)} 
+            className={`p-2 ${themeClasses.text.primary} ${themeClasses.hover} rounded-lg`}
+          >
             <ArrowLeft className="h-5 w-5" />
           </button>
-          <h1 className="text-lg font-bold theme-text">Cart ({getTotalItems()})</h1>
+          <h1 className={`text-lg font-bold ${themeClasses.text.primary}`}>Cart ({getTotalItems()})</h1>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
           {/* Cart Items - Mobile optimized */}
           <div className="lg:col-span-2">
-            <div className="theme-surface rounded-xl theme-border border overflow-hidden">
+            <div className={`${themeClasses.surface} rounded-xl ${themeClasses.border} border overflow-hidden`}>
               {/* Desktop Header */}
-              <div className="hidden lg:block p-4 border-b theme-border">
-                <h1 className="text-lg font-bold theme-text">Shopping Cart</h1>
-                <p className="theme-text-muted text-sm">{getTotalItems()} items</p>
+              <div className={`hidden lg:block p-4 border-b ${themeClasses.border}`}>
+                <h1 className={`text-lg font-bold ${themeClasses.text.primary}`}>Shopping Cart</h1>
+                <p className={`${themeClasses.text.muted} text-sm`}>{getTotalItems()} items</p>
               </div>
 
               <div className="p-3 lg:p-4 space-y-3">
@@ -172,7 +214,10 @@ const Cart = () => {
                   const itemTotal = productPrice * item.quantity;
                   
                   return (
-                    <div key={item.product._id || item.product.id} className="flex items-center gap-3 p-3 theme-border border rounded-lg">
+                    <div 
+                      key={item.product._id || item.product.id} 
+                      className={`flex items-center gap-3 p-3 ${themeClasses.border} border rounded-lg`}
+                    >
                       <img
                         src={item.product.images?.[0] || '/api/placeholder/80/80'}
                         alt={item.product.name}
@@ -180,9 +225,13 @@ const Cart = () => {
                       />
                       
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-medium theme-text text-sm lg:text-base truncate">{item.product.name}</h3>
-                        <p className="theme-text-muted text-xs lg:text-sm">{item.product.brand}</p>
-                        <p className="text-sm lg:text-base font-semibold theme-text">
+                        <h3 className={`font-medium ${themeClasses.text.primary} text-sm lg:text-base truncate`}>
+                          {item.product.name}
+                        </h3>
+                        <p className={`${themeClasses.text.muted} text-xs lg:text-sm`}>
+                          {item.product.brand}
+                        </p>
+                        <p className={`text-sm lg:text-base font-semibold ${themeClasses.text.primary}`}>
                           {formatCurrency(productPrice)}
                         </p>
                       </div>
@@ -191,21 +240,23 @@ const Cart = () => {
                         <button
                           onClick={() => updateQuantity(item.product._id || item.product.id, item.quantity - 1)}
                           disabled={item.quantity <= 1}
-                          className="p-1 lg:p-2 rounded-full hover:theme-secondary disabled:opacity-30 transition-colors"
+                          className={`p-1 lg:p-2 rounded-full ${themeClasses.hover} disabled:opacity-30 transition-colors`}
                         >
-                          <Minus className="h-3 w-3 lg:h-4 lg:w-4 theme-text" />
+                          <Minus className={`h-3 w-3 lg:h-4 lg:w-4 ${themeClasses.text.primary}`} />
                         </button>
-                        <span className="w-6 text-center font-medium theme-text text-sm">{item.quantity}</span>
+                        <span className={`w-6 text-center font-medium ${themeClasses.text.primary} text-sm`}>
+                          {item.quantity}
+                        </span>
                         <button
                           onClick={() => updateQuantity(item.product._id || item.product.id, item.quantity + 1)}
-                          className="p-1 lg:p-2 rounded-full hover:theme-secondary transition-colors"
+                          className={`p-1 lg:p-2 rounded-full ${themeClasses.hover} transition-colors`}
                         >
-                          <Plus className="h-3 w-3 lg:h-4 lg:w-4 theme-text" />
+                          <Plus className={`h-3 w-3 lg:h-4 lg:w-4 ${themeClasses.text.primary}`} />
                         </button>
                       </div>
 
                       <div className="text-right">
-                        <p className="font-semibold theme-text text-sm lg:text-base">
+                        <p className={`font-semibold ${themeClasses.text.primary} text-sm lg:text-base`}>
                           {formatCurrency(itemTotal)}
                         </p>
                         <button
@@ -221,10 +272,12 @@ const Cart = () => {
               </div>
 
               {/* Cart Summary */}
-              <div className="p-3 lg:p-4 border-t theme-border">
+              <div className={`p-3 lg:p-4 border-t ${themeClasses.border}`}>
                 <div className="flex justify-between items-center mb-3">
-                  <span className="theme-text font-medium text-sm">Subtotal:</span>
-                  <span className="theme-text font-semibold">{formatCurrency(getTotalPrice())}</span>
+                  <span className={`${themeClasses.text.primary} font-medium text-sm`}>Subtotal:</span>
+                  <span className={`${themeClasses.text.primary} font-semibold`}>
+                    {formatCurrency(getTotalPrice())}
+                  </span>
                 </div>
                 <button
                   onClick={clearCart}
@@ -238,9 +291,9 @@ const Cart = () => {
 
           {/* Checkout Section - Sticky on desktop */}
           <div className="lg:col-span-1">
-            <div className="theme-surface rounded-xl theme-border border overflow-hidden lg:sticky lg:top-4">
-              <div className="p-4 border-b theme-border">
-                <h2 className="font-bold theme-text text-lg">Checkout</h2>
+            <div className={`${themeClasses.surface} rounded-xl ${themeClasses.border} border overflow-hidden lg:sticky lg:top-4`}>
+              <div className={`p-4 border-b ${themeClasses.border}`}>
+                <h2 className={`font-bold ${themeClasses.text.primary} text-lg`}>Checkout</h2>
               </div>
 
               <div className="p-4">
@@ -252,7 +305,7 @@ const Cart = () => {
 
                 {/* Payment Method - Compact */}
                 <div className="mb-4">
-                  <label className="block text-sm font-medium theme-text mb-2">Payment</label>
+                  <label className={`block text-sm font-medium ${themeClasses.text.primary} mb-2`}>Payment</label>
                   <div className="grid grid-cols-2 gap-2">
                     {[
                       { value: 'onDelivery', label: 'Cash on Delivery' },
@@ -266,7 +319,7 @@ const Cart = () => {
                         className={`p-2 border rounded-lg text-xs transition-colors ${
                           checkoutData.paymentMethod === method.value 
                             ? 'bg-blue-600 text-white border-blue-600' 
-                            : 'theme-border theme-text hover:theme-secondary'
+                            : `${themeClasses.border} ${themeClasses.text.primary} ${themeClasses.hover}`
                         }`}
                       >
                         {method.label}
@@ -278,7 +331,7 @@ const Cart = () => {
                 {/* Contact Information */}
                 <div className="space-y-3 mb-4">
                   <div>
-                    <label className="block text-xs font-medium theme-text mb-1">
+                    <label className={`block text-xs font-medium ${themeClasses.text.primary} mb-1`}>
                       <Phone className="h-3 w-3 inline mr-1" />
                       Phone *
                     </label>
@@ -286,14 +339,14 @@ const Cart = () => {
                       type="tel"
                       value={checkoutData.phoneNumber}
                       onChange={(e) => handlePhoneChange(e.target.value)}
-                      className="w-full p-2 text-sm border theme-border rounded-lg focus:ring-1 focus:ring-blue-500 transition-colors"
+                      className={`w-full p-2 text-sm border ${themeClasses.border} rounded-lg focus:ring-1 focus:ring-blue-500 transition-colors ${themeClasses.surface} ${themeClasses.text.primary}`}
                       placeholder="0751234567"
                       required
                     />
                   </div>
                   
                   <div>
-                    <label className="block text-xs font-medium theme-text mb-1">
+                    <label className={`block text-xs font-medium ${themeClasses.text.primary} mb-1`}>
                       <MapPin className="h-3 w-3 inline mr-1" />
                       Location *
                     </label>
@@ -301,7 +354,7 @@ const Cart = () => {
                       type="text"
                       value={checkoutData.location}
                       onChange={(e) => handleInputChange('location', e.target.value)}
-                      className="w-full p-2 text-sm border theme-border rounded-lg focus:ring-1 focus:ring-blue-500 transition-colors"
+                      className={`w-full p-2 text-sm border ${themeClasses.border} rounded-lg focus:ring-1 focus:ring-blue-500 transition-colors ${themeClasses.surface} ${themeClasses.text.primary}`}
                       placeholder="Delivery address"
                       required
                     />
@@ -310,29 +363,29 @@ const Cart = () => {
 
                 {/* Additional Notes */}
                 <div className="mb-4">
-                  <label className="block text-xs font-medium theme-text mb-1">
+                  <label className={`block text-xs font-medium ${themeClasses.text.primary} mb-1`}>
                     Notes (Optional)
                   </label>
                   <textarea
                     value={checkoutData.notes}
                     onChange={(e) => handleInputChange('notes', e.target.value)}
                     rows="2"
-                    className="w-full p-2 text-sm border theme-border rounded-lg focus:ring-1 focus:ring-blue-500 transition-colors"
+                    className={`w-full p-2 text-sm border ${themeClasses.border} rounded-lg focus:ring-1 focus:ring-blue-500 transition-colors ${themeClasses.surface} ${themeClasses.text.primary}`}
                     placeholder="Special instructions..."
                   />
                 </div>
 
                 {/* Order Summary */}
-                <div className="theme-secondary p-3 rounded-lg mb-4">
+                <div className={`${themeClasses.bg.primary} p-3 rounded-lg mb-4`}>
                   <div className="space-y-1 text-sm">
                     <div className="flex justify-between">
-                      <span className="theme-text">Subtotal:</span>
-                      <span className="theme-text">{formatCurrency(getTotalPrice())}</span>
+                      <span className={themeClasses.text.primary}>Subtotal:</span>
+                      <span className={themeClasses.text.primary}>{formatCurrency(getTotalPrice())}</span>
                     </div>
-                    <div className="border-t theme-border pt-2">
+                    <div className={`border-t ${themeClasses.border} pt-2`}>
                       <div className="flex justify-between items-center">
-                        <span className="font-bold theme-text">Total:</span>
-                        <span className="font-bold theme-text text-lg">
+                        <span className={`font-bold ${themeClasses.text.primary}`}>Total:</span>
+                        <span className={`font-bold ${themeClasses.text.primary} text-lg`}>
                           {formatCurrency(getTotalPrice())}
                         </span>
                       </div>
@@ -340,7 +393,7 @@ const Cart = () => {
                   </div>
                 </div>
 
-                {/* Checkout Button - Fixed theme issue */}
+                {/* Checkout Button */}
                 <button 
                   onClick={handleCheckout}
                   disabled={isProcessing || !checkoutData.phoneNumber || !checkoutData.location}

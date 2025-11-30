@@ -1,6 +1,4 @@
 
-declare interface errorDetailsType {}
-
 declare interface methodsType {}
 
 declare interface productsConfigType {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { 
@@ -9,8 +9,9 @@ import {
 } from 'lucide-react';
 
 const MyOrders = () => {
-  const { user } = useAuth();
+  const { user, token, isLoggedIn, logout } = useAuth();
   const { currentTheme } = useTheme();
+  const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
   const [filteredOrders, setFilteredOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -23,7 +24,10 @@ const MyOrders = () => {
   const [cancellationReason, setCancellationReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
-  // Theme-aware styling functions - Updated to match cart.jsx
+  // Get API base URL from environment variables
+  const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://kiwa-8lrz.onrender.com/api';
+
+  // Theme-aware styling functions
   const getThemeClasses = () => {
     switch (currentTheme) {
       case 'dark':
@@ -158,51 +162,79 @@ const MyOrders = () => {
     }
   }, [orders, statusFilter]);
 
-  // Data fetching
+  // Data fetching with proper authentication
   const fetchOrders = async () => {
+    // Check if user is properly authenticated
+    if (!isLoggedIn || !token) {
+      setError('Please login to view your orders');
+      setLoading(false);
+      return;
+    }
+
     try {
-      const response = await fetch('http://localhost:5000/api/orders/my-orders', {
+      const response = await fetch(`${API_BASE_URL}/orders/my-orders`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${token}`
         }
       });
       
-      if (!response.ok) throw new Error(`Failed to fetch orders: ${response.status}`);
+      if (!response.ok) {
+        if (response.status === 401) {
+          // Token is invalid, logout user
+          logout();
+          navigate('/login', { state: { from: '/my-orders' } });
+          throw new Error('Session expired. Please login again.');
+        }
+        throw new Error(`Failed to fetch orders: ${response.status}`);
+      }
       
       const result = await response.json();
       if (result.success) {
         setOrders(result.orders);
+        setError('');
       } else {
         setError(result.message || 'Failed to fetch orders');
       }
     } catch (error) {
       console.error('Error fetching orders:', error);
-      setError('Failed to load orders. Please try again.');
+      setError(error.message || 'Failed to load orders. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (user) fetchOrders();
-  }, [user]);
+    if (isLoggedIn) {
+      fetchOrders();
+    } else {
+      setLoading(false);
+      setError('Please login to view your orders');
+    }
+  }, [isLoggedIn]);
 
-  // Order actions
+  // Order actions with proper authentication
   const handleConfirmDelivery = async () => {
     if (!selectedOrder || !confirmationNote.trim()) return;
     
     setActionLoading(true);
     try {
-      const response = await fetch(`http://localhost:5000/api/orders/${selectedOrder._id}/confirm-delivery`, {
+      const response = await fetch(`${API_BASE_URL}/orders/${selectedOrder._id}/confirm-delivery`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ confirmationNote: confirmationNote.trim() })
       });
 
-      if (!response.ok) throw new Error(`Failed to confirm delivery: ${response.status}`);
+      if (!response.ok) {
+        if (response.status === 401) {
+          logout();
+          navigate('/login', { state: { from: '/my-orders' } });
+          throw new Error('Session expired. Please login again.');
+        }
+        throw new Error(`Failed to confirm delivery: ${response.status}`);
+      }
       
       const result = await response.json();
       if (result.success) {
@@ -212,12 +244,13 @@ const MyOrders = () => {
             : order
         ));
         closeModals();
+        setError('');
       } else {
         setError(result.message || 'Failed to confirm delivery');
       }
     } catch (error) {
       console.error('Error confirming delivery:', error);
-      setError('Failed to confirm delivery');
+      setError(error.message || 'Failed to confirm delivery');
     } finally {
       setActionLoading(false);
     }
@@ -228,16 +261,23 @@ const MyOrders = () => {
     
     setActionLoading(true);
     try {
-      const response = await fetch(`http://localhost:5000/api/orders/${selectedOrder._id}/cancel`, {
+      const response = await fetch(`${API_BASE_URL}/orders/${selectedOrder._id}/cancel`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ reason: cancellationReason.trim() })
       });
 
-      if (!response.ok) throw new Error(`Failed to cancel order: ${response.status}`);
+      if (!response.ok) {
+        if (response.status === 401) {
+          logout();
+          navigate('/login', { state: { from: '/my-orders' } });
+          throw new Error('Session expired. Please login again.');
+        }
+        throw new Error(`Failed to cancel order: ${response.status}`);
+      }
       
       const result = await response.json();
       if (result.success) {
@@ -247,12 +287,13 @@ const MyOrders = () => {
             : order
         ));
         closeModals();
+        setError('');
       } else {
         setError(result.message || 'Failed to cancel order');
       }
     } catch (error) {
       console.error('Error cancelling order:', error);
-      setError('Failed to cancel order');
+      setError(error.message || 'Failed to cancel order');
     } finally {
       setActionLoading(false);
     }
@@ -263,12 +304,14 @@ const MyOrders = () => {
     setSelectedOrder(order);
     setConfirmationNote('');
     setShowConfirmModal(true);
+    setError('');
   };
 
   const openCancelModal = (order) => {
     setSelectedOrder(order);
     setCancellationReason('');
     setShowCancelModal(true);
+    setError('');
   };
 
   const closeModals = () => {
@@ -277,6 +320,7 @@ const MyOrders = () => {
     setSelectedOrder(null);
     setConfirmationNote('');
     setCancellationReason('');
+    setError('');
   };
 
   // Quick stats
@@ -288,6 +332,25 @@ const MyOrders = () => {
     confirmed: orders.filter(o => o.orderStatus === 'confirmed').length,
     cancelled: orders.filter(o => o.orderStatus === 'cancelled').length
   };
+
+  // Redirect to login if not authenticated
+  if (!isLoggedIn) {
+    return (
+      <div className={`min-h-screen ${themeClasses.bg.primary} flex items-center justify-center p-4`}>
+        <div className="text-center max-w-md">
+          <ShoppingBag className={`h-12 w-12 ${themeClasses.text.muted} mx-auto mb-3`} />
+          <h2 className={`text-xl font-bold ${themeClasses.text.primary} mb-2`}>Please Login</h2>
+          <p className={`${themeClasses.text.muted} mb-4 text-sm`}>You need to be logged in to view your orders.</p>
+          <button
+            onClick={() => navigate('/login', { state: { from: '/my-orders' } })}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium text-sm transition-colors"
+          >
+            Login Now
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Loading state
   if (loading) {
@@ -336,7 +399,7 @@ const MyOrders = () => {
                 </div>
               </div>
 
-              {/* Filter Buttons - Replaced dropdown */}
+              {/* Filter Buttons */}
               <div className="flex flex-wrap gap-2">
                 {STATUS_FILTERS.map((filter) => {
                   const Icon = filter.icon;
@@ -392,6 +455,12 @@ const MyOrders = () => {
             <div className="flex items-center gap-2">
               <AlertCircle className="h-4 w-4" />
               {error}
+              <button 
+                onClick={() => setError('')}
+                className="ml-auto text-red-700 hover:text-red-800"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
           </div>
         )}

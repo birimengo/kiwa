@@ -13,32 +13,35 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [guest, setGuest] = useState({ id: 'guest', name: 'Guest', role: 'guest' });
+  const [token, setToken] = useState(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
+    const storedToken = localStorage.getItem('token');
     const userData = localStorage.getItem('user');
     
-    if (token && userData) {
+    if (storedToken && userData) {
+      setToken(storedToken);
       setUser(JSON.parse(userData));
     }
     setLoading(false);
   }, []);
 
-  const login = (userData, token) => {
-    localStorage.setItem('token', token);
+  const login = (userData, authToken) => {
+    localStorage.setItem('token', authToken);
     localStorage.setItem('user', JSON.stringify(userData));
+    setToken(authToken);
     setUser(userData);
   };
 
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    setToken(null);
     setUser(null);
   };
 
   const requireAuth = (action) => {
-    if (!user) {
+    if (!user || !token) {
       // Store the intended action to perform after login
       const redirectAction = {
         type: action.type,
@@ -51,14 +54,29 @@ export const AuthProvider = ({ children }) => {
     return true;
   };
 
+  // Check if token is valid (not expired)
+  const isTokenValid = () => {
+    if (!token) return false;
+    
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.exp * 1000 > Date.now();
+    } catch (error) {
+      console.error('Token validation error:', error);
+      return false;
+    }
+  };
+
   const value = {
-    user: user || guest, // Always return user or guest
-    isLoggedIn: !!user,
-    isGuest: !user,
+    user: user,
+    token: token,
+    isLoggedIn: !!user && !!token && isTokenValid(),
+    isGuest: !user || !token,
     isAdmin: user?.role === 'admin',
     login,
     logout,
-    requireAuth
+    requireAuth,
+    isTokenValid
   };
 
   return (
