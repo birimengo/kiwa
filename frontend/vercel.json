@@ -11,11 +11,16 @@
   ],
   "routes": [
     {
+      "src": "/(.*\\.\\w+)",
+      "dest": "/$1"
+    },
+    {
       "src": "/(.*)",
       "dest": "/index.html"
     }
   ],
-  "env": {
-    "VITE_API_URL": "https://kiwa-8lrz.onrender.com/api"
-  }
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "installCommand": "npm install",
+  "devCommand": "vite"
 }
