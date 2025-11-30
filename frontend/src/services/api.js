@@ -1,22 +1,15 @@
 import axios from 'axios';
 
-// Configuration - WITH PROXY FIX
-const isDevelopment = import.meta.env.DEV;
-const API_BASE_URL = isDevelopment 
-  ? '/api' // Use proxy in development
-  : 'https://kiwa-8lrz.onrender.com'; // Direct in production
-
-const DEFAULT_TIMEOUT = 30000; // Reduced from 400000ms
-const HEALTH_CHECK_TIMEOUT = 10000; // Reduced from 50000ms
+// USE ENVIRONMENT VARIABLE - This will work for both dev and production
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://kiwa-8lrz.onrender.com/api';
 
 console.log('🚀 Using API URL:', API_BASE_URL);
 console.log('🌍 Environment:', import.meta.env.MODE);
-console.log('🔧 Development mode:', isDevelopment);
+console.log('🔧 VITE_API_URL:', import.meta.env.VITE_API_URL);
 
-// Axios instance configuration
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: DEFAULT_TIMEOUT,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -29,12 +22,7 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    
-    // Log the full URL being called
-    const fullUrl = config.baseURL + config.url;
-    console.log(`🔄 API Request: ${config.method?.toUpperCase()} ${fullUrl}`);
-    console.log('🔧 Using proxy:', isDevelopment);
-    
+    console.log(`🔄 API Request: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
     return config;
   },
   (error) => {
@@ -43,56 +31,36 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor - UPDATED FOR PRODUCTION
+// Response interceptor
 api.interceptors.response.use(
   (response) => {
     console.log(`✅ API Response: ${response.config.url} ${response.status}`);
     return response;
   },
   (error) => {
-    const errorDetails = {
+    console.error('❌ API Error:', {
       url: error.config?.url,
       status: error.response?.status,
-      message: error.response?.data?.message || error.message,
-      code: error.code,
-      baseURL: error.config?.baseURL
-    };
+      message: error.message,
+      code: error.code
+    });
     
-    console.error('❌ API Error:', errorDetails);
-    
-    // Enhanced error handling for production
     let userMessage = error.message;
-    const isProduction = import.meta.env.PROD;
-    
-    switch (true) {
-      case error.code === 'ECONNABORTED':
-        userMessage = isProduction 
-          ? 'Request timeout - Backend server might be spinning up. Please try again in 30 seconds.'
-          : `Request timeout - The server is taking too long to respond. Using proxy: ${isDevelopment}`;
-        break;
-      case !error.response:
-        if (isDevelopment) {
-          userMessage = `Cannot connect to backend via proxy. Check if backend is running at https://kiwa.onrender.com and proxy is configured.`;
-        } else {
-          userMessage = 'Cannot connect to backend server. The server might be temporarily unavailable.';
-        }
-        break;
-      case error.response.status === 401:
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        if (window.location.pathname !== '/login') {
-          window.location.href = '/login';
-        }
-        userMessage = 'Session expired. Please login again.';
-        break;
-      case error.response.status === 404:
-        userMessage = 'Requested resource not found.';
-        break;
-      case error.response.status >= 500:
-        userMessage = 'Server error. Please try again later.';
-        break;
-      default:
-        userMessage = error.response?.data?.message || error.message;
+    if (error.code === 'ECONNABORTED') {
+      userMessage = 'Request timeout - Backend server might be spinning up.';
+    } else if (!error.response) {
+      userMessage = `Cannot connect to backend at ${API_BASE_URL}`;
+    } else if (error.response.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+      userMessage = 'Session expired. Please login again.';
+    } else if (error.response.status === 404) {
+      userMessage = 'Requested resource not found.';
+    } else if (error.response.status >= 500) {
+      userMessage = 'Server error. Please try again later.';
     }
     
     error.userMessage = userMessage;
@@ -127,21 +95,19 @@ const validateId = (id, entityName = 'Resource') => {
   }
 };
 
-// Enhanced Connection Testing for Production
+// Enhanced Connection Testing
 export const testBackendConnection = async () => {
   try {
     console.log('🔌 Testing connection to:', API_BASE_URL);
-    console.log('🔧 Using proxy:', isDevelopment);
     
-    const response = await api.get('/health', { timeout: HEALTH_CHECK_TIMEOUT });
+    const response = await api.get('/health', { timeout: 10000 });
     console.log('✅ Backend connection successful');
     return {
       connected: true,
       status: response.status,
       data: response.data,
       environment: import.meta.env.MODE,
-      baseURL: API_BASE_URL,
-      viaProxy: isDevelopment
+      baseURL: API_BASE_URL
     };
   } catch (error) {
     console.error('❌ Backend connection test failed:', error.message);
@@ -150,23 +116,7 @@ export const testBackendConnection = async () => {
       error: error.message,
       status: error.response?.status,
       environment: import.meta.env.MODE,
-      baseURL: API_BASE_URL,
-      viaProxy: isDevelopment
-    };
-  }
-};
-
-export const testCORS = async () => {
-  try {
-    const response = await api.get('/health');
-    return {
-      corsWorking: true,
-      status: response.status
-    };
-  } catch (error) {
-    return {
-      corsWorking: false,
-      error: error.message
+      baseURL: API_BASE_URL
     };
   }
 };
@@ -196,7 +146,6 @@ const createApiMethods = (endpoint, config = {}) => {
     create: (data) => {
       validateRequiredFields(data, requiredFields);
       
-      // Apply custom validations
       Object.entries(customValidations).forEach(([field, validation]) => {
         if (data[field] !== undefined && !validation(data[field])) {
           throw new Error(`Invalid ${field}`);
@@ -506,8 +455,7 @@ export const getApiStatus = async () => {
     status: connection.status,
     error: connection.error,
     timestamp: new Date().toISOString(),
-    environment: import.meta.env.MODE,
-    viaProxy: isDevelopment
+    environment: import.meta.env.MODE
   };
 };
 
