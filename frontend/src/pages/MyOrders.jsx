@@ -5,7 +5,7 @@ import { useTheme } from '../context/ThemeContext';
 import { 
   ShoppingBag, Clock, Truck, CheckCircle, XCircle, 
   ArrowLeft, X, Check, AlertCircle,
-  Package, Calendar
+  Package, Calendar, ChevronLeft, ChevronRight
 } from 'lucide-react';
 
 const MyOrders = () => {
@@ -23,6 +23,7 @@ const MyOrders = () => {
   const [confirmationNote, setConfirmationNote] = useState('');
   const [cancellationReason, setCancellationReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [imageIndices, setImageIndices] = useState({});
 
   // Get API base URL from environment variables
   const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://kiwa-8lrz.onrender.com/api';
@@ -50,19 +51,19 @@ const MyOrders = () => {
       case 'ocean':
         return {
           bg: {
-            primary: 'bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700',
-            secondary: 'bg-blue-800',
-            tertiary: 'bg-blue-700',
+            primary: 'bg-gradient-to-br from-cyan-50 to-blue-100',
+            secondary: 'bg-white',
+            tertiary: 'bg-blue-50',
             light: 'bg-blue-50'
           },
           text: {
-            primary: 'text-white',
-            secondary: 'text-blue-100',
-            muted: 'text-blue-200'
+            primary: 'text-gray-900',
+            secondary: 'text-gray-700',
+            muted: 'text-gray-500'
           },
-          border: 'border-blue-600',
-          surface: 'bg-blue-800',
-          hover: 'hover:bg-blue-700'
+          border: 'border-blue-200',
+          surface: 'bg-white',
+          hover: 'hover:bg-blue-50'
         };
       default: // light
         return {
@@ -151,6 +152,51 @@ const MyOrders = () => {
 
   const getCurrentFilter = () => {
     return STATUS_FILTERS.find(filter => filter.value === statusFilter) || STATUS_FILTERS[0];
+  };
+
+  // Image navigation functions
+  const navigateImage = (orderId, direction) => {
+    setImageIndices(prev => {
+      const order = orders.find(o => o._id === orderId);
+      if (!order || !order.items || order.items.length === 0) return prev;
+      
+      const currentIndex = prev[orderId] || 0;
+      const totalImages = order.items.reduce((total, item) => total + (item.images?.length || 0), 0);
+      
+      let newIndex;
+      if (direction === 'next') {
+        newIndex = (currentIndex + 1) % totalImages;
+      } else {
+        newIndex = (currentIndex - 1 + totalImages) % totalImages;
+      }
+      
+      return { ...prev, [orderId]: newIndex };
+    });
+  };
+
+  const getCurrentImage = (order) => {
+    if (!order || !order.items || order.items.length === 0) return null;
+    
+    const currentIndex = imageIndices[order._id] || 0;
+    let imageCount = 0;
+    
+    for (const item of order.items) {
+      if (!item.images || item.images.length === 0) continue;
+      
+      for (let i = 0; i < item.images.length; i++) {
+        if (imageCount === currentIndex) {
+          return {
+            url: item.images[i],
+            productName: item.productName,
+            itemIndex: order.items.indexOf(item),
+            imageIndex: i
+          };
+        }
+        imageCount++;
+      }
+    }
+    
+    return null;
   };
 
   // Filter orders based on status
@@ -366,7 +412,7 @@ const MyOrders = () => {
 
   return (
     <div className={`min-h-screen ${themeClasses.bg.primary} py-4`}>
-      <div className="max-w-6xl mx-auto px-3 sm:px-4">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4">
         
         {/* Header Section */}
         <div className={`${themeClasses.surface} rounded-xl shadow border ${themeClasses.border} overflow-hidden mb-4`}>
@@ -465,7 +511,7 @@ const MyOrders = () => {
           </div>
         )}
 
-        {/* Orders List */}
+        {/* Orders Grid */}
         <div className={`${themeClasses.surface} rounded-xl shadow border ${themeClasses.border} overflow-hidden`}>
           <div className="p-4">
             {filteredOrders.length === 0 ? (
@@ -476,7 +522,7 @@ const MyOrders = () => {
                 themeClasses={themeClasses}
               />
             ) : (
-              <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredOrders.map((order) => (
                   <OrderCard
                     key={order._id}
@@ -487,6 +533,9 @@ const MyOrders = () => {
                     formatDate={formatDate}
                     getStatusConfig={getStatusConfig}
                     themeClasses={themeClasses}
+                    getCurrentImage={getCurrentImage}
+                    navigateImage={navigateImage}
+                    imageIndex={imageIndices[order._id] || 0}
                   />
                 ))}
               </div>
@@ -569,16 +618,75 @@ const EmptyState = ({ statusFilter, ordersCount, currentFilter, themeClasses }) 
   );
 };
 
-const OrderCard = ({ order, onConfirmDelivery, onCancelOrder, formatCurrency, formatDate, getStatusConfig, themeClasses }) => {
+const OrderCard = ({ 
+  order, 
+  onConfirmDelivery, 
+  onCancelOrder, 
+  formatCurrency, 
+  formatDate, 
+  getStatusConfig, 
+  themeClasses,
+  getCurrentImage,
+  navigateImage,
+  imageIndex
+}) => {
   const statusConfig = getStatusConfig(order.orderStatus);
   const StatusIcon = statusConfig.icon;
+  const currentImage = getCurrentImage(order);
+
+  // Calculate total images count
+  const totalImages = order.items?.reduce((total, item) => total + (item.images?.length || 0), 0) || 0;
 
   return (
-    <div className={`${themeClasses.bg.tertiary} rounded-lg border ${themeClasses.border} p-4 transition-all hover:border-blue-300 dark:hover:border-blue-400 ocean:hover:border-blue-400 ocean:hover:shadow-md`}>
-      {/* Order Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
+    <div className={`${themeClasses.bg.secondary} rounded-lg border ${themeClasses.border} overflow-hidden transition-all hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-400 ocean:hover:border-blue-300`}>
+      
+      {/* Image Gallery Section */}
+      {totalImages > 0 && (
+        <div className="relative aspect-video bg-gray-100 overflow-hidden">
+          {currentImage ? (
+            <>
+              <img 
+                src={currentImage.url} 
+                alt={currentImage.productName}
+                className="w-full h-full object-cover"
+              />
+              
+              {/* Navigation Arrows */}
+              {totalImages > 1 && (
+                <>
+                  <button
+                    onClick={() => navigateImage(order._id, 'prev')}
+                    className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-full transition-all"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => navigateImage(order._id, 'next')}
+                    className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-full transition-all"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </>
+              )}
+              
+              {/* Image Counter */}
+              <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-50 text-white px-2 py-1 rounded-full text-xs">
+                {imageIndex + 1} / {totalImages}
+              </div>
+            </>
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-gray-200">
+              <Package className="h-12 w-12 text-gray-400" />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Order Details */}
+      <div className="p-4">
+        {/* Order Header */}
+        <div className="flex flex-col gap-2 mb-3">
+          <div className="flex items-center justify-between">
             <h3 className={`font-semibold ${themeClasses.text.primary} text-sm truncate`}>{order.orderNumber}</h3>
             <span className={`px-2 py-1 rounded-full border text-xs font-medium ${statusConfig.color}`}>
               <span className="flex items-center gap-1">
@@ -592,47 +700,52 @@ const OrderCard = ({ order, onConfirmDelivery, onCancelOrder, formatCurrency, fo
             {formatDate(order.createdAt)}
           </div>
         </div>
-        <div className="text-right">
-          <p className={`text-lg font-bold ${themeClasses.text.primary}`}>{formatCurrency(order.totalAmount)}</p>
-        </div>
-      </div>
 
-      {/* Order Items */}
-      <div className={`border-t ${themeClasses.border} pt-3`}>
-        <div className="space-y-2">
-          {order.items.map((item, index) => (
-            <div key={index} className="flex justify-between items-start text-sm">
-              <div className="flex-1 min-w-0">
-                <p className={`font-medium ${themeClasses.text.primary} truncate`}>{item.productName}</p>
-                <p className={`${themeClasses.text.muted} text-xs`}>
-                  Qty: {item.quantity} × {formatCurrency(item.unitPrice)}
+        {/* Order Items */}
+        <div className={`border-t ${themeClasses.border} pt-3 mb-3`}>
+          <div className="space-y-2">
+            {order.items.map((item, index) => (
+              <div key={index} className="flex justify-between items-start text-sm">
+                <div className="flex-1 min-w-0">
+                  <p className={`font-medium ${themeClasses.text.primary} truncate`}>{item.productName}</p>
+                  <p className={`${themeClasses.text.muted} text-xs`}>
+                    Qty: {item.quantity} × {formatCurrency(item.unitPrice)}
+                  </p>
+                </div>
+                <p className={`font-medium ${themeClasses.text.primary} whitespace-nowrap ml-2`}>
+                  {formatCurrency(item.totalPrice)}
                 </p>
               </div>
-              <p className={`font-medium ${themeClasses.text.primary} whitespace-nowrap ml-2`}>
-                {formatCurrency(item.totalPrice)}
-              </p>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
 
-      {/* Payment Method */}
-      <div className={`border-t ${themeClasses.border} pt-2 mt-3`}>
-        <div className="flex justify-between items-center text-xs">
-          <span className={themeClasses.text.muted}>Payment method:</span>
-          <span className={`${themeClasses.text.primary} font-medium capitalize`}>
-            {order.paymentMethod?.replace(/([A-Z])/g, ' $1').trim() || 'Cash on Delivery'}
-          </span>
+        {/* Order Summary */}
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between items-center">
+            <span className={themeClasses.text.muted}>Subtotal:</span>
+            <span className={themeClasses.text.primary}>{formatCurrency(order.totalAmount)}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className={themeClasses.text.muted}>Payment method:</span>
+            <span className={`${themeClasses.text.primary} font-medium capitalize`}>
+              {order.paymentMethod?.replace(/([A-Z])/g, ' $1').trim() || 'Cash on Delivery'}
+            </span>
+          </div>
+          <div className="flex justify-between items-center font-semibold border-t pt-2">
+            <span className={themeClasses.text.primary}>Total:</span>
+            <span className={`text-lg ${themeClasses.text.primary}`}>{formatCurrency(order.totalAmount)}</span>
+          </div>
         </div>
-      </div>
 
-      {/* Action Buttons */}
-      <OrderActions 
-        order={order}
-        onConfirmDelivery={onConfirmDelivery}
-        onCancelOrder={onCancelOrder}
-        themeClasses={themeClasses}
-      />
+        {/* Action Buttons */}
+        <OrderActions 
+          order={order}
+          onConfirmDelivery={onConfirmDelivery}
+          onCancelOrder={onCancelOrder}
+          themeClasses={themeClasses}
+        />
+      </div>
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Clock, Truck, CheckCircle, XCircle, AlertCircle, RefreshCw, X } from 'lucide-react';
+import { Package, Clock, Truck, CheckCircle, XCircle, AlertCircle, RefreshCw, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 
@@ -12,6 +12,7 @@ const AdminOrders = () => {
   const [rejectReason, setRejectReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
+  const [imageIndices, setImageIndices] = useState({});
 
   // Get API base URL from environment variables
   const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://kiwa-8lrz.onrender.com/api';
@@ -24,7 +25,8 @@ const AdminOrders = () => {
           bg: {
             primary: 'bg-gray-900',
             secondary: 'bg-gray-800',
-            tertiary: 'bg-gray-700'
+            tertiary: 'bg-gray-700',
+            light: 'bg-gray-50'
           },
           text: {
             primary: 'text-white',
@@ -38,25 +40,27 @@ const AdminOrders = () => {
       case 'ocean':
         return {
           bg: {
-            primary: 'bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700',
-            secondary: 'bg-blue-800',
-            tertiary: 'bg-blue-700'
+            primary: 'bg-gradient-to-br from-cyan-50 to-blue-100',
+            secondary: 'bg-white',
+            tertiary: 'bg-blue-50',
+            light: 'bg-blue-50'
           },
           text: {
-            primary: 'text-white',
-            secondary: 'text-blue-100',
-            muted: 'text-blue-200'
+            primary: 'text-gray-900',
+            secondary: 'text-gray-700',
+            muted: 'text-gray-500'
           },
-          border: 'border-blue-600',
-          surface: 'bg-blue-800',
-          hover: 'hover:bg-blue-700'
+          border: 'border-blue-200',
+          surface: 'bg-white',
+          hover: 'hover:bg-blue-50'
         };
       default: // light
         return {
           bg: {
             primary: 'bg-gray-50',
             secondary: 'bg-white',
-            tertiary: 'bg-gray-100'
+            tertiary: 'bg-gray-100',
+            light: 'bg-gray-50'
           },
           text: {
             primary: 'text-gray-900',
@@ -71,6 +75,51 @@ const AdminOrders = () => {
   };
 
   const themeClasses = getThemeClasses();
+
+  // Image navigation functions
+  const navigateImage = (orderId, direction) => {
+    setImageIndices(prev => {
+      const order = orders.find(o => o._id === orderId);
+      if (!order || !order.items || order.items.length === 0) return prev;
+      
+      const currentIndex = prev[orderId] || 0;
+      const totalImages = order.items.reduce((total, item) => total + (item.images?.length || 0), 0);
+      
+      let newIndex;
+      if (direction === 'next') {
+        newIndex = (currentIndex + 1) % totalImages;
+      } else {
+        newIndex = (currentIndex - 1 + totalImages) % totalImages;
+      }
+      
+      return { ...prev, [orderId]: newIndex };
+    });
+  };
+
+  const getCurrentImage = (order) => {
+    if (!order || !order.items || order.items.length === 0) return null;
+    
+    const currentIndex = imageIndices[order._id] || 0;
+    let imageCount = 0;
+    
+    for (const item of order.items) {
+      if (!item.images || item.images.length === 0) continue;
+      
+      for (let i = 0; i < item.images.length; i++) {
+        if (imageCount === currentIndex) {
+          return {
+            url: item.images[i],
+            productName: item.productName,
+            itemIndex: order.items.indexOf(item),
+            imageIndex: i
+          };
+        }
+        imageCount++;
+      }
+    }
+    
+    return null;
+  };
 
   // Fetch all orders for admin - FIXED API URL
   const fetchOrders = async () => {
@@ -273,7 +322,7 @@ const AdminOrders = () => {
 
   return (
     <div className={`min-h-screen ${themeClasses.bg.primary} py-8`}>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className={`${themeClasses.surface} rounded-lg shadow-lg ${themeClasses.border} border overflow-hidden mb-6`}>
           <div className={`p-6 border-b ${themeClasses.border}`}>
@@ -342,146 +391,32 @@ const AdminOrders = () => {
           </div>
         )}
 
-        {/* Orders List */}
-        <div className="space-y-4">
+        {/* Orders Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
           {orders.length === 0 ? (
-            <div className={`text-center py-12 ${themeClasses.surface} rounded-lg`}>
+            <div className={`text-center py-12 ${themeClasses.surface} rounded-lg col-span-full`}>
               <Package className={`h-16 w-16 ${themeClasses.text.muted} mx-auto mb-4`} />
               <h2 className={`text-xl font-bold ${themeClasses.text.primary} mb-2`}>No orders found</h2>
               <p className={themeClasses.text.muted}>There are no orders to manage at the moment.</p>
             </div>
           ) : (
             orders.map(order => (
-              <div key={order._id} className={`${themeClasses.surface} rounded-lg shadow ${themeClasses.border} border p-6`}>
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className={`text-lg font-semibold ${themeClasses.text.primary}`}>{order.orderNumber}</h3>
-                      <span className={`px-3 py-1 rounded-full text-sm font-medium border ${getStatusColor(order.orderStatus)} flex items-center gap-1`}>
-                        {getStatusIcon(order.orderStatus)}
-                        {order.orderStatus.charAt(0).toUpperCase() + order.orderStatus.slice(1)}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                      <div>
-                        <p className={`font-medium ${themeClasses.text.primary}`}>
-                          {order.customer?.name || 'N/A'}
-                        </p>
-                        <p className={themeClasses.text.muted}>
-                          {order.customer?.phone || 'No phone'}
-                        </p>
-                        <p className={themeClasses.text.muted}>
-                          {order.customer?.location || 'No location'}
-                        </p>
-                      </div>
-                      <div className="text-right md:text-left">
-                        <p className={themeClasses.text.muted}>
-                          {formatDate(order.createdAt)}
-                        </p>
-                        <p className={`text-lg font-bold ${themeClasses.text.primary}`}>
-                          {formatCurrency(order.totalAmount)}
-                        </p>
-                        <p className={`text-xs ${themeClasses.text.muted} capitalize`}>
-                          {order.paymentMethod || 'Cash on Delivery'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Admin Actions */}
-                  <div className="flex flex-wrap gap-2">
-                    {order.orderStatus === 'pending' && (
-                      <>
-                        <button
-                          onClick={() => processOrder(order._id)}
-                          disabled={actionLoading}
-                          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {actionLoading ? (
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                          ) : (
-                            <Truck className="h-4 w-4" />
-                          )}
-                          Process Order
-                        </button>
-                        <button
-                          onClick={() => setSelectedOrder(order)}
-                          className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
-                        >
-                          <XCircle className="h-4 w-4" />
-                          Reject
-                        </button>
-                      </>
-                    )}
-                    
-                    {order.orderStatus === 'processing' && (
-                      <button
-                        onClick={() => deliverOrder(order._id)}
-                        disabled={actionLoading}
-                        className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        {actionLoading ? (
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        ) : (
-                          <CheckCircle className="h-4 w-4" />
-                        )}
-                        Mark Delivered
-                      </button>
-                    )}
-                    
-                    {order.orderStatus === 'delivered' && (
-                      <span className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-800 rounded-lg border border-purple-200">
-                        <Truck className="h-4 w-4" />
-                        Awaiting Confirmation
-                      </span>
-                    )}
-                    
-                    {order.orderStatus === 'confirmed' && (
-                      <span className="flex items-center gap-2 px-4 py-2 bg-green-100 text-green-800 rounded-lg border border-green-200">
-                        <CheckCircle className="h-4 w-4" />
-                        Sale Completed
-                      </span>
-                    )}
-
-                    {order.orderStatus === 'cancelled' && (
-                      <span className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-800 rounded-lg border border-red-200">
-                        <XCircle className="h-4 w-4" />
-                        Order Cancelled
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Order Items */}
-                <div className={`border-t ${themeClasses.border} pt-4`}>
-                  <h4 className={`font-semibold ${themeClasses.text.primary} mb-2`}>Order Items:</h4>
-                  <div className="space-y-2">
-                    {order.items.map((item, index) => (
-                      <div key={index} className="flex justify-between items-center text-sm">
-                        <div>
-                          <p className={`font-medium ${themeClasses.text.primary}`}>{item.productName}</p>
-                          <p className={themeClasses.text.muted}>
-                            Qty: {item.quantity} × {formatCurrency(item.unitPrice)}
-                          </p>
-                        </div>
-                        <p className={`font-medium ${themeClasses.text.primary}`}>
-                          {formatCurrency(item.totalPrice)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Customer Notes */}
-                {order.customerNotes && (
-                  <div className={`border-t ${themeClasses.border} pt-4 mt-4`}>
-                    <h4 className={`font-semibold ${themeClasses.text.primary} mb-2`}>Customer Notes:</h4>
-                    <p className={`text-sm ${themeClasses.text.secondary} bg-yellow-50 border border-yellow-200 rounded-lg p-3`}>
-                      {order.customerNotes}
-                    </p>
-                  </div>
-                )}
-              </div>
+              <OrderCard
+                key={order._id}
+                order={order}
+                themeClasses={themeClasses}
+                getStatusIcon={getStatusIcon}
+                getStatusColor={getStatusColor}
+                formatCurrency={formatCurrency}
+                formatDate={formatDate}
+                processOrder={processOrder}
+                deliverOrder={deliverOrder}
+                setSelectedOrder={setSelectedOrder}
+                actionLoading={actionLoading}
+                getCurrentImage={getCurrentImage}
+                navigateImage={navigateImage}
+                imageIndex={imageIndices[order._id] || 0}
+              />
             ))
           )}
         </div>
@@ -551,6 +486,215 @@ const AdminOrders = () => {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Order Card Component
+const OrderCard = ({ 
+  order, 
+  themeClasses, 
+  getStatusIcon, 
+  getStatusColor, 
+  formatCurrency, 
+  formatDate, 
+  processOrder, 
+  deliverOrder, 
+  setSelectedOrder, 
+  actionLoading,
+  getCurrentImage,
+  navigateImage,
+  imageIndex
+}) => {
+  const currentImage = getCurrentImage(order);
+  const totalImages = order.items?.reduce((total, item) => total + (item.images?.length || 0), 0) || 0;
+
+  return (
+    <div className={`${themeClasses.surface} rounded-lg shadow ${themeClasses.border} border overflow-hidden transition-all hover:shadow-lg`}>
+      
+      {/* Image Gallery Section */}
+      {totalImages > 0 && (
+        <div className="relative aspect-video bg-gray-100 overflow-hidden">
+          {currentImage ? (
+            <>
+              <img 
+                src={currentImage.url} 
+                alt={currentImage.productName}
+                className="w-full h-full object-cover"
+              />
+              
+              {/* Navigation Arrows */}
+              {totalImages > 1 && (
+                <>
+                  <button
+                    onClick={() => navigateImage(order._id, 'prev')}
+                    className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-full transition-all"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => navigateImage(order._id, 'next')}
+                    className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-full transition-all"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </>
+              )}
+              
+              {/* Image Counter */}
+              <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-50 text-white px-2 py-1 rounded-full text-xs">
+                {imageIndex + 1} / {totalImages}
+              </div>
+            </>
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-gray-200">
+              <Package className="h-12 w-12 text-gray-400" />
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="p-4">
+        {/* Order Header */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex-1 min-w-0">
+            <h3 className={`text-lg font-semibold ${themeClasses.text.primary} truncate`}>{order.orderNumber}</h3>
+            <div className="flex items-center gap-2 mt-1">
+              <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(order.orderStatus)} flex items-center gap-1`}>
+                {getStatusIcon(order.orderStatus)}
+                {order.orderStatus.charAt(0).toUpperCase() + order.orderStatus.slice(1)}
+              </span>
+              <span className={`text-xs ${themeClasses.text.muted}`}>
+                {formatDate(order.createdAt)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Customer Info */}
+        <div className="mb-3">
+          <p className={`font-medium ${themeClasses.text.primary} text-sm`}>
+            {order.customer?.name || 'N/A'}
+          </p>
+          <p className={`text-xs ${themeClasses.text.muted}`}>
+            {order.customer?.phone || 'No phone'}
+          </p>
+          <p className={`text-xs ${themeClasses.text.muted} truncate`}>
+            {order.customer?.location || 'No location'}
+          </p>
+        </div>
+
+        {/* Order Summary */}
+        <div className="mb-3">
+          <div className="flex justify-between items-center">
+            <span className={`text-sm ${themeClasses.text.muted}`}>Total Amount:</span>
+            <span className={`text-lg font-bold ${themeClasses.text.primary}`}>
+              {formatCurrency(order.totalAmount)}
+            </span>
+          </div>
+          <div className="flex justify-between items-center text-xs">
+            <span className={themeClasses.text.muted}>Payment:</span>
+            <span className={`${themeClasses.text.primary} capitalize`}>
+              {order.paymentMethod || 'Cash on Delivery'}
+            </span>
+          </div>
+        </div>
+
+        {/* Order Items Preview */}
+        <div className={`border-t ${themeClasses.border} pt-3 mb-3`}>
+          <h4 className={`font-semibold ${themeClasses.text.primary} text-sm mb-2`}>Items:</h4>
+          <div className="space-y-1 max-h-20 overflow-y-auto">
+            {order.items.slice(0, 3).map((item, index) => (
+              <div key={index} className="flex justify-between items-center text-xs">
+                <span className={`${themeClasses.text.primary} truncate flex-1`}>
+                  {item.productName}
+                </span>
+                <span className={`${themeClasses.text.primary} whitespace-nowrap ml-2`}>
+                  {formatCurrency(item.totalPrice)}
+                </span>
+              </div>
+            ))}
+            {order.items.length > 3 && (
+              <p className={`text-xs ${themeClasses.text.muted}`}>
+                +{order.items.length - 3} more items
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Admin Actions */}
+        <div className="flex flex-wrap gap-2">
+          {order.orderStatus === 'pending' && (
+            <>
+              <button
+                onClick={() => processOrder(order._id)}
+                disabled={actionLoading}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 text-sm"
+              >
+                {actionLoading ? (
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                ) : (
+                  <Truck className="h-3 w-3" />
+                )}
+                Process
+              </button>
+              <button
+                onClick={() => setSelectedOrder(order)}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors text-sm"
+              >
+                <XCircle className="h-3 w-3" />
+                Reject
+              </button>
+            </>
+          )}
+          
+          {order.orderStatus === 'processing' && (
+            <button
+              onClick={() => deliverOrder(order._id)}
+              disabled={actionLoading}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 text-sm"
+            >
+              {actionLoading ? (
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+              ) : (
+                <CheckCircle className="h-3 w-3" />
+              )}
+              Mark Delivered
+            </button>
+          )}
+          
+          {order.orderStatus === 'delivered' && (
+            <span className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-purple-100 text-purple-800 rounded-lg border border-purple-200 text-sm">
+              <Truck className="h-3 w-3" />
+              Awaiting Confirmation
+            </span>
+          )}
+          
+          {order.orderStatus === 'confirmed' && (
+            <span className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-green-100 text-green-800 rounded-lg border border-green-200 text-sm">
+              <CheckCircle className="h-3 w-3" />
+              Sale Completed
+            </span>
+          )}
+
+          {order.orderStatus === 'cancelled' && (
+            <span className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-red-100 text-red-800 rounded-lg border border-red-200 text-sm">
+              <XCircle className="h-3 w-3" />
+              Order Cancelled
+            </span>
+          )}
+        </div>
+
+        {/* Customer Notes */}
+        {order.customerNotes && (
+          <div className={`border-t ${themeClasses.border} pt-3 mt-3`}>
+            <h4 className={`font-semibold ${themeClasses.text.primary} text-sm mb-1`}>Customer Notes:</h4>
+            <p className={`text-xs ${themeClasses.text.secondary} bg-yellow-50 border border-yellow-200 rounded p-2`}>
+              {order.customerNotes}
+            </p>
           </div>
         )}
       </div>
