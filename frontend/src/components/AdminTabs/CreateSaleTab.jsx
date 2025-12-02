@@ -1,8 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Minus, Trash2, User, Phone, Mail, Receipt, Calculator, ShoppingCart, RefreshCw, AlertCircle, CreditCard, Smartphone, Building, Edit3, Save } from 'lucide-react';
+import { 
+  Search, Plus, Minus, Trash2, User, Phone, Mail, Receipt, Calculator, 
+  ShoppingCart, RefreshCw, AlertCircle, CreditCard, Smartphone, Building, 
+  Edit3, Save, Cloud, CloudOff, CheckCircle, Printer, Database 
+} from 'lucide-react';
 import { salesAPI } from '../../services/api';
+import LocalStorageService from '../../services/localStorageService';
 
-const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefresh }) => {
+const CreateSaleTab = ({ 
+  products = [], 
+  productsLoading = false, 
+  onProductsRefresh,
+  onSaleCreated,
+  isOnline = true,
+  user // Add user prop for tracking who made the sale
+}) => {
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProducts, setSelectedProducts] = useState([]);
@@ -18,14 +30,46 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
   });
   const [creatingSale, setCreatingSale] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [editingPrice, setEditingPrice] = useState(null); // Track which product is being edited
-  const [customPrice, setCustomPrice] = useState(''); // Temporary custom price input
+  const [success, setSuccess] = useState(null);
+  const [editingPrice, setEditingPrice] = useState(null);
+  const [customPrice, setCustomPrice] = useState('');
+  const [offlineReceipt, setOfflineReceipt] = useState(null);
+  const [offlineSalesCount, setOfflineSalesCount] = useState(0);
 
-  // Initialize filtered products when products prop changes
+  // Initialize filtered products
   useEffect(() => {
     setFilteredProducts(products);
   }, [products]);
+
+  // Load offline sales count
+  useEffect(() => {
+    const loadOfflineStats = () => {
+      try {
+        const sales = LocalStorageService.getSales();
+        const offlineSales = sales.filter(s => s.isLocal && !s.synced);
+        setOfflineSalesCount(offlineSales.length);
+      } catch (error) {
+        console.error('Error loading offline stats:', error);
+      }
+    };
+    
+    loadOfflineStats();
+    const interval = setInterval(loadOfflineStats, 30000); // Refresh every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  // Auto-clear success messages after timeout
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => {
+        setSuccess(null);
+        setOfflineReceipt(null);
+      }, 10000); // Clear after 10 seconds
+      
+      return () => clearTimeout(timer);
+    }
+  }, [success]);
 
   // Filter products based on search term
   useEffect(() => {
@@ -69,14 +113,14 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
           productId: product._id,
           name: product.name,
           brand: product.brand,
-          unitPrice: product.sellingPrice, // Original selling price
-          originalPrice: product.sellingPrice, // Store original price for reference
+          unitPrice: product.sellingPrice,
+          originalPrice: product.sellingPrice,
           unitCost: product.purchasePrice,
           quantity: 1,
           stock: product.stock,
           maxQuantity: product.stock,
-          useCustomPrice: false, // Default to original price
-          customPrice: product.sellingPrice // Initialize with original price
+          useCustomPrice: false,
+          customPrice: product.sellingPrice
         }
       ]);
     }
@@ -108,14 +152,12 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
   const removeProductFromSale = (productId) => {
     setSelectedProducts(prev => prev.filter(item => item.productId !== productId));
     setError('');
-    // Clear editing state if the product being edited is removed
     if (editingPrice === productId) {
       setEditingPrice(null);
       setCustomPrice('');
     }
   };
 
-  // Toggle between original price and custom price
   const togglePriceType = (productId, useCustom) => {
     setSelectedProducts(prev =>
       prev.map(item => {
@@ -132,13 +174,11 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
     );
   };
 
-  // Start editing custom price
   const startEditingPrice = (productId, currentCustomPrice) => {
     setEditingPrice(productId);
     setCustomPrice(currentCustomPrice.toString());
   };
 
-  // Save custom price
   const saveCustomPrice = (productId) => {
     const priceValue = parseFloat(customPrice);
     if (isNaN(priceValue) || priceValue < 0) {
@@ -153,7 +193,6 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
             ...item,
             customPrice: priceValue
           };
-          // If custom price is currently being used, update the unit price as well
           if (item.useCustomPrice) {
             updatedItem.unitPrice = priceValue;
           }
@@ -168,33 +207,30 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
     setError('');
   };
 
-  // Cancel editing custom price
   const cancelEditingPrice = () => {
     setEditingPrice(null);
     setCustomPrice('');
     setError('');
   };
 
-  // Calculate sale totals
   const calculateTotals = () => {
     const subtotal = selectedProducts.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
     const totalCost = selectedProducts.reduce((sum, item) => sum + (item.unitCost * item.quantity), 0);
     const totalAmount = subtotal;
     const totalProfit = totalAmount - totalCost;
-    const balance = totalAmount - saleDetails.amountPaid;
+    const balance = Math.max(totalAmount - saleDetails.amountPaid, 0);
 
     return {
       subtotal,
       totalCost,
       totalAmount,
       totalProfit,
-      balance: Math.max(balance, 0)
+      balance
     };
   };
 
   const totals = calculateTotals();
 
-  // Auto-set amount paid to total amount when selected products change
   useEffect(() => {
     if (totals.totalAmount > 0) {
       setSaleDetails(prev => ({ 
@@ -209,6 +245,135 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
     }
   }, [totals.totalAmount]);
 
+  // Generate offline receipt
+  const generateOfflineReceipt = (sale) => {
+    const items = sale.items.map(item => ({
+      name: item.productName,
+      brand: item.productBrand,
+      quantity: item.quantity,
+      price: item.unitPrice,
+      total: item.unitPrice * item.quantity
+    }));
+
+    return {
+      title: 'ELECTROSHOP - OFFLINE RECEIPT',
+      saleNumber: sale.saleNumber,
+      date: new Date(sale.createdAt).toLocaleDateString(),
+      time: new Date(sale.createdAt).toLocaleTimeString(),
+      note: '⚠️ LOCAL COPY - Will sync when online',
+      customer: sale.customer,
+      items,
+      totals: {
+        subtotal: sale.subtotal,
+        discount: 0,
+        tax: 0,
+        total: sale.totalAmount,
+        paid: sale.amountPaid,
+        balance: Math.max(sale.totalAmount - sale.amountPaid, 0)
+      },
+      paymentMethod: sale.paymentMethod,
+      cashier: sale.soldBy || 'Local Admin'
+    };
+  };
+
+  // Print offline receipt
+  const printOfflineReceipt = () => {
+    if (!offlineReceipt) return;
+    
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Receipt - ${offlineReceipt.saleNumber}</title>
+        <style>
+          body { font-family: 'Courier New', monospace; margin: 20px; }
+          .receipt { width: 300px; margin: 0 auto; }
+          .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 10px; margin-bottom: 15px; }
+          .header h1 { margin: 0; font-size: 20px; }
+          .warning { background: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin: 10px 0; text-align: center; }
+          table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+          th, td { padding: 5px; text-align: left; border-bottom: 1px dashed #ddd; }
+          .total-row { font-weight: bold; border-top: 2px dashed #000; }
+          .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+        </style>
+      </head>
+      <body>
+        <div class="receipt">
+          <div class="header">
+            <h1>ELECTROSHOP</h1>
+            <p>Your Electronics Store</p>
+            <p>Tel: +256 712 345 678</p>
+          </div>
+          
+          <div class="warning">
+            ⚠️ OFFLINE RECEIPT - LOCAL COPY<br>
+            Will sync when internet is restored
+          </div>
+          
+          <div class="sale-info">
+            <p><strong>Receipt No:</strong> ${offlineReceipt.saleNumber}</p>
+            <p><strong>Date:</strong> ${offlineReceipt.date}</p>
+            <p><strong>Time:</strong> ${offlineReceipt.time}</p>
+            <p><strong>Customer:</strong> ${offlineReceipt.customer.name}</p>
+          </div>
+          
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Qty</th>
+                <th>Price</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${offlineReceipt.items.map(item => `
+                <tr>
+                  <td>${item.name}<br><small>${item.brand}</small></td>
+                  <td>${item.quantity}</td>
+                  <td>UGX ${item.price.toLocaleString()}</td>
+                  <td>UGX ${(item.price * item.quantity).toLocaleString()}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          
+          <div class="totals">
+            <p><strong>Subtotal:</strong> UGX ${offlineReceipt.totals.subtotal.toLocaleString()}</p>
+            <p><strong>Discount:</strong> UGX ${offlineReceipt.totals.discount.toLocaleString()}</p>
+            <p><strong>Tax:</strong> UGX ${offlineReceipt.totals.tax.toLocaleString()}</p>
+            <p class="total-row">Total: UGX ${offlineReceipt.totals.total.toLocaleString()}</p>
+            <p>Paid: UGX ${offlineReceipt.totals.paid.toLocaleString()}</p>
+            <p>Balance: UGX ${offlineReceipt.totals.balance.toLocaleString()}</p>
+            <p>Payment: ${offlineReceipt.paymentMethod}</p>
+          </div>
+          
+          <div class="footer">
+            <p>Thank you for your business!</p>
+            <p>Items sold are not returnable</p>
+            <p>Warranty according to manufacturer policy</p>
+            <p>*** www.electroshop.com ***</p>
+          </div>
+        </div>
+        <script>
+          window.onload = () => {
+            window.print();
+            setTimeout(() => window.close(), 1000);
+          };
+        </script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const createOnlineSale = async (saleData) => {
+    const response = await salesAPI.createSale(saleData);
+    return response.data;
+  };
+
+  // Enhanced handleCreateSale for offline
   const handleCreateSale = async () => {
     if (selectedProducts.length === 0) {
       setError('Add at least one product to the sale');
@@ -230,49 +395,211 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
 
     setCreatingSale(true);
     setError('');
+    setSuccess(null);
 
     try {
       const customerData = {
         name: customer.name.trim() || 'Walk-in Customer',
         phone: customer.phone.trim() || '',
-        email: customer.email.trim() || ''
+        email: customer.email.trim() || '',
+        location: ''
       };
 
       const saleData = {
         customer: customerData,
         items: selectedProducts.map(item => ({
           productId: item.productId,
+          productName: item.name,
+          productBrand: item.brand,
           quantity: item.quantity,
-          unitPrice: item.unitPrice, // This will be either original or custom price
-          originalPrice: item.originalPrice, // Send original price for reference
-          usedCustomPrice: item.useCustomPrice // Flag to indicate if custom price was used
+          unitPrice: item.unitPrice,
+          unitCost: item.unitCost,
+          originalPrice: item.originalPrice,
+          usedCustomPrice: item.useCustomPrice
         })),
-        discountAmount: 0,
-        taxAmount: 0,
+        subtotal: totals.subtotal,
+        totalCost: totals.totalCost,
+        totalProfit: totals.totalProfit,
+        totalAmount: totals.totalAmount,
         paymentMethod: saleDetails.paymentMethod,
         amountPaid: saleDetails.amountPaid,
-        notes: saleDetails.notes
+        notes: saleDetails.notes,
+        soldBy: user?.id || user?.name || 'local_admin'
       };
 
-      const response = await salesAPI.createSale(saleData);
-      
-      setSuccess('Sale created successfully!');
-      alert(`Sale ${response.data.sale.saleNumber} created!`);
-      
-      if (onProductsRefresh) {
-        onProductsRefresh();
+      if (!isOnline) {
+        // Create comprehensive sale data for offline
+        console.log('📱 Creating offline sale...', saleData);
+        const offlineSale = LocalStorageService.addOfflineSale(saleData);
+        
+        if (offlineSale) {
+          // Generate receipt
+          const receipt = generateOfflineReceipt(offlineSale);
+          setOfflineReceipt(receipt);
+          
+          // Show success
+          setSuccess({
+            saleNumber: offlineSale.saleNumber,
+            message: '✅ Sale saved locally!',
+            showPrint: true
+          });
+          
+          // Update offline sales count
+          const sales = LocalStorageService.getSales();
+          const offlineSales = sales.filter(s => s.isLocal && !s.synced);
+          setOfflineSalesCount(offlineSales.length);
+          
+          // Reset form immediately
+          resetForm();
+          
+          // Refresh products if callback exists (do this after reset)
+          if (onProductsRefresh) {
+            console.log('🔄 Refreshing products...');
+            onProductsRefresh();
+          }
+          
+          // Notify parent component
+          if (onSaleCreated) {
+            console.log('📢 Notifying parent of sale created');
+            onSaleCreated();
+          }
+          
+          console.log(`✅ Offline sale created: ${offlineSale.saleNumber}`);
+        } else {
+          setError('Failed to save sale locally. Please try again.');
+        }
+      } else {
+        // Create sale online
+        const result = await createOnlineSale(saleData);
+        
+        if (result.success) {
+          setSuccess({
+            saleNumber: result.sale.saleNumber,
+            message: '✅ Sale created successfully!',
+            showPrint: false
+          });
+          
+          // Reset form
+          resetForm();
+          
+          // Refresh products if callback exists
+          if (onProductsRefresh) {
+            onProductsRefresh();
+          }
+          
+          // Notify parent component
+          if (onSaleCreated) {
+            onSaleCreated();
+          }
+        } else {
+          setError(result.message || 'Failed to create sale');
+          
+          // Try offline save if online failed
+          try {
+            setError('Online creation failed. Saving locally...');
+            const offlineSale = LocalStorageService.addOfflineSale({
+              ...saleData,
+              syncError: true,
+              errorMessage: result.message
+            });
+            
+            if (offlineSale) {
+              setSuccess({
+                saleNumber: offlineSale.saleNumber,
+                message: 'Sale saved locally due to connection error.',
+                showPrint: true
+              });
+              
+              const receipt = generateOfflineReceipt(offlineSale);
+              setOfflineReceipt(receipt);
+              
+              if (onProductsRefresh) {
+                onProductsRefresh();
+              }
+              
+              // Update offline sales count
+              const sales = LocalStorageService.getSales();
+              const offlineSales = sales.filter(s => s.isLocal && !s.synced);
+              setOfflineSalesCount(offlineSales.length);
+            }
+          } catch (offlineError) {
+            setError(`Failed to save sale: ${offlineError.message}`);
+          }
+        }
       }
-      
-      resetForm();
       
     } catch (error) {
       console.error('Error creating sale:', error);
-      if (error.code === 'ECONNABORTED') {
-        setError('Backend server not responding');
-      } else if (!error.response) {
-        setError('Cannot connect to backend server');
+      
+      // Try offline save if online failed
+      if (isOnline && error.response?.status !== 401) {
+        try {
+          setError('Connection error. Saving locally...');
+          const customerData = {
+            name: customer.name.trim() || 'Walk-in Customer',
+            phone: customer.phone.trim() || '',
+            email: customer.email.trim() || '',
+            location: ''
+          };
+
+          const saleData = {
+            customer: customerData,
+            items: selectedProducts.map(item => ({
+              productId: item.productId,
+              productName: item.name,
+              productBrand: item.brand,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              unitCost: item.unitCost,
+              originalPrice: item.originalPrice,
+              usedCustomPrice: item.useCustomPrice
+            })),
+            subtotal: totals.subtotal,
+            totalCost: totals.totalCost,
+            totalProfit: totals.totalProfit,
+            totalAmount: totals.totalAmount,
+            paymentMethod: saleDetails.paymentMethod,
+            amountPaid: saleDetails.amountPaid,
+            notes: saleDetails.notes,
+            soldBy: user?.id || user?.name || 'local_admin'
+          };
+
+          const offlineSale = LocalStorageService.addOfflineSale({
+            ...saleData,
+            syncError: true,
+            errorMessage: error.message
+          });
+          
+          if (offlineSale) {
+            setSuccess({
+              saleNumber: offlineSale.saleNumber,
+              message: 'Sale saved locally due to connection error.',
+              showPrint: true
+            });
+            
+            const receipt = generateOfflineReceipt(offlineSale);
+            setOfflineReceipt(receipt);
+            
+            if (onProductsRefresh) {
+              onProductsRefresh();
+            }
+            
+            // Update offline sales count
+            const sales = LocalStorageService.getSales();
+            const offlineSales = sales.filter(s => s.isLocal && !s.synced);
+            setOfflineSalesCount(offlineSales.length);
+          }
+        } catch (offlineError) {
+          setError(`Failed to save sale: ${offlineError.message}`);
+        }
       } else {
-        setError(error.response?.data?.message || 'Failed to create sale');
+        if (error.code === 'ECONNABORTED') {
+          setError('Backend server not responding');
+        } else if (!error.response) {
+          setError('Cannot connect to backend server');
+        } else {
+          setError(error.response?.data?.message || 'Failed to create sale');
+        }
       }
     } finally {
       setCreatingSale(false);
@@ -280,6 +607,7 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
   };
 
   const resetForm = () => {
+    console.log('🔄 Resetting form...');
     setSelectedProducts([]);
     setCustomer({ name: '', phone: '', email: '' });
     setSaleDetails({
@@ -289,7 +617,6 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
     });
     setSearchTerm('');
     setError('');
-    setSuccess('');
     setEditingPrice(null);
     setCustomPrice('');
   };
@@ -302,6 +629,54 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
 
   return (
     <div className="space-y-4 p-2">
+      {/* Network Status */}
+      {!isOnline && (
+        <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CloudOff className="h-4 w-4 text-yellow-600" />
+              <div>
+                <p className="text-sm font-semibold text-yellow-800">Offline Mode</p>
+                <p className="text-xs text-yellow-700">
+                  Sales will be saved locally and synced when internet returns
+                </p>
+              </div>
+            </div>
+            <div className="text-xs text-yellow-800">
+              {offlineSalesCount > 0 && (
+                <span className="bg-yellow-100 px-2 py-1 rounded">
+                  {offlineSalesCount} pending sales
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Message */}
+      {success && (
+        <div className={`p-3 ${success.showPrint ? 'bg-green-50 border border-green-200 rounded-lg' : 'bg-green-50 border border-green-200 rounded text-xs'}`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-green-600" />
+              <div>
+                <p className="text-sm font-semibold text-green-800">{success.message}</p>
+                <p className="text-xs text-green-700">Sale #{success.saleNumber}</p>
+              </div>
+            </div>
+            {success.showPrint && (
+              <button
+                onClick={printOfflineReceipt}
+                className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm"
+              >
+                <Printer className="h-3 w-3" />
+                Print Receipt
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Error and Success Messages */}
       {error && (
         <div className="p-2 bg-red-50 border border-red-200 rounded flex items-center justify-between text-xs">
@@ -318,12 +693,6 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
               Retry
             </button>
           )}
-        </div>
-      )}
-      
-      {success && (
-        <div className="p-2 bg-green-50 border border-green-200 rounded text-xs">
-          <p className="text-green-700">{success}</p>
         </div>
       )}
 
@@ -394,6 +763,11 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
                           }`}>
                             {product.stock}
                           </span>
+                          {product.isLocal && (
+                            <span className="text-xs px-1 py-0.5 rounded bg-blue-100 text-blue-800">
+                              Local
+                            </span>
+                          )}
                         </div>
                       </div>
                       <button
@@ -741,12 +1115,12 @@ const CreateSaleTab = ({ products = [], productsLoading = false, onProductsRefre
                 {creatingSale ? (
                   <>
                     <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                    Processing...
+                    {isOnline ? 'Processing...' : 'Saving locally...'}
                   </>
                 ) : (
                   <>
                     <Receipt className="h-3 w-3" />
-                    Create Sale
+                    {isOnline ? 'Create Sale' : 'Save Locally'}
                   </>
                 )}
               </button>
