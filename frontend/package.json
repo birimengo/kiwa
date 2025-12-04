@@ -3,11 +3,12 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "scripts": {
+ "scripts": {
     "dev": "vite",
-    "build": "vite build && npm run copy-static",
-    "copy-static": "cp -r public/* dist/ 2>/dev/null || echo 'No static files to copy'",
-    "vercel-build": "vite build && cp -r public/* dist/",
+    "build": "vite build",
+    "vercel-build": "npm run build && npm run generate-sitemap && npm run generate-robots",
+    "generate-sitemap": "cp public/sitemap.xml dist/sitemap.xml",
+    "generate-robots": "cp public/robots.txt dist/robots.txt",
     "lint": "eslint .",
     "preview": "vite preview"
   },

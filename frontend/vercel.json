@@ -11,29 +11,18 @@
   ],
   "routes": [
     {
-      "src": "/sitemap.xml",
+      "src": "/sitemap\\.xml",
       "dest": "/sitemap.xml",
       "headers": {
         "Content-Type": "application/xml; charset=utf-8"
       }
     },
     {
-      "src": "/robots.txt",
+      "src": "/robots\\.txt",
       "dest": "/robots.txt",
       "headers": {
         "Content-Type": "text/plain; charset=utf-8"
       }
-    },
-    {
-      "src": "/manifest.json",
-      "dest": "/manifest.json",
-      "headers": {
-        "Content-Type": "application/json; charset=utf-8"
-      }
-    },
-    {
-      "src": "/(.*\\.(ico|png|jpg|jpeg|svg|gif|webp|css|js|json|webmanifest))$",
-      "dest": "/$1"
     },
     {
       "src": "/(.*)",
