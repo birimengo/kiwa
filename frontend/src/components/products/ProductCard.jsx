@@ -70,7 +70,7 @@ const ProductCard = ({ product }) => {
     e.stopPropagation();
     
     const message = `Hi, I'm interested in ${product.name}. Price: UGX ${product.sellingPrice?.toLocaleString()}. Can you provide more details?`;
-    const phoneNumber = '256700000000';
+    const phoneNumber = '+256751808507'; // CHANGED HERE
     const url = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
   };
