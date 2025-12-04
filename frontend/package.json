@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && npm run copy-static",
+    "copy-static": "cp -r public/* dist/ 2>/dev/null || echo 'No static files to copy'",
+    "vercel-build": "vite build && cp -r public/* dist/",
     "lint": "eslint .",
     "preview": "vite preview"
   },
