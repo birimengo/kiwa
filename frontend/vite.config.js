@@ -1,28 +1,12 @@
+// vite.config.js
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react-swc'
 import tailwindcss from '@tailwindcss/vite'
-import { viteStaticCopy } from 'vite-plugin-static-copy'
 
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    viteStaticCopy({
-      targets: [
-        {
-          src: 'public/sitemap.xml',
-          dest: '.'
-        },
-        {
-          src: 'public/robots.txt',
-          dest: '.'
-        },
-        {
-          src: 'public/manifest.json',
-          dest: '.'
-        }
-      ]
-    })
   ],
   server: {
     host: 'localhost',
@@ -39,11 +23,5 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    rollupOptions: {
-      output: {
-        manualChunks: undefined
-      }
-    }
-  },
-  publicDir: 'public'
+  }
 })
