@@ -5,6 +5,9 @@
     <link rel="icon" type="image/svg+xml" href="/trade-svgrepo-com.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
     
+    <!-- Google Site Verification -->
+    <meta name="google-site-verification" content="-K49oUeEqOO4LajndsUHhdfptgndujhkhPiQsVC7Pw4" />
+    
     <!-- Primary Meta Tags for Uganda Market -->
     <title>Kiwa General Electricals - Electrical & Electronics Wholesale & Retail Uganda | Kampala | 0751808507</title>
     <meta name="description" content="☎️ 0751808507 | Uganda's No.1 Electrical & Electronics Store. Wholesale & Retail prices for Home Appliances, Industrial Equipment, Wires, Switches, Sockets, Generators, Solar Systems, and all Electrical Goods in Kampala with Free Delivery across Uganda.">
@@ -30,6 +33,12 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Kiwa Electricals">
+    
+    <!-- Bing Webmaster Verification -->
+    <meta name="msvalidate.01" content="YOUR_BING_CODE_HERE">
+    
+    <!-- Yandex Webmaster Verification -->
+    <meta name="yandex-verification" content="YOUR_YANDEX_CODE_HERE">
     
     <!-- Local Business Schema with Contact Info -->
     <script type="application/ld+json">
@@ -222,22 +231,52 @@
         document.documentElement.classList.add('pwa-mode');
       }
       
-      // Enhanced analytics for Uganda
+      // Google Analytics 4 (GA4)
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-      // Add your Google Analytics ID here when available
-      // gtag('config', 'UA-XXXXXXXXX-X');
+      
+      // Add your Google Analytics 4 Measurement ID when available
+      // gtag('config', 'G-XXXXXXXXXX');
+      
+      // Google Tag Manager (Optional - for future use)
+      // (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+      // new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+      // j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+      // 'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+      // })(window,document,'script','dataLayer','GTM-XXXXXXX');
       
       // Track contact clicks
       document.addEventListener('click', function(e) {
         if (e.target.closest('[href^="tel:"]') || e.target.closest('[href^="mailto:"]')) {
+          // Send event to Google Analytics if available
           if (typeof gtag !== 'undefined') {
             gtag('event', 'contact_click', {
               'event_category': 'engagement',
-              'event_label': e.target.closest('a').href
+              'event_label': e.target.closest('a').href,
+              'value': 1
             });
           }
+        }
+        
+        // Track WhatsApp clicks
+        if (e.target.closest('[href*="whatsapp.com"]') || e.target.closest('[href*="wa.me"]')) {
+          if (typeof gtag !== 'undefined') {
+            gtag('event', 'whatsapp_click', {
+              'event_category': 'conversion',
+              'event_label': 'WhatsApp Inquiry',
+              'value': 1
+            });
+          }
+        }
+      });
+      
+      // Track page views for SPA
+      window.addEventListener('popstate', function() {
+        if (typeof gtag !== 'undefined') {
+          gtag('config', 'G-XXXXXXXXXX', {
+            'page_path': window.location.pathname + window.location.search
+          });
         }
       });
     </script>
@@ -278,6 +317,10 @@
       ]
     }
     </script>
+    
+    <!-- Google Tag Manager (noscript) - Optional -->
+    <!-- <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-XXXXXXX"
+    height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript> -->
     
     <script type="module" src="/src/main.jsx"></script>
   </body>
