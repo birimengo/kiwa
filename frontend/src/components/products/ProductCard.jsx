@@ -79,7 +79,7 @@ const ProductCard = ({ product }) => {
     e.preventDefault();
     e.stopPropagation();
     
-    const phoneNumber = 'tel:+256700000000';
+    const phoneNumber = 'tel:+256751808507';
     window.location.href = phoneNumber;
   };
 
@@ -114,16 +114,24 @@ const ProductCard = ({ product }) => {
 
   return (
     <div 
-      className="relative rounded-xl overflow-hidden cursor-pointer h-80 transition-all duration-300 hover:shadow-2xl shadow-lg group"
+      className="relative rounded-xl overflow-hidden cursor-pointer h-80 transition-all duration-300 hover:shadow-2xl shadow-lg group bg-gray-100"
       onClick={handleCardClick}
     >
-      {/* Background Image - Clear and Covering Entire Card */}
-      <div 
-        className="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-105"
-        style={{ backgroundImage: `url(${currentImage})` }}
-      >
-        {/* No overlays - image is completely clear */}
+      {/* Image Container - Fixed with object-fit */}
+      <div className="absolute inset-0 flex items-center justify-center">
+        <img 
+          src={currentImage} 
+          alt={product.name}
+          className="w-full h-full object-contain bg-white"
+          onError={(e) => {
+            e.target.onerror = null;
+            e.target.src = 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400&h=300&fit=crop';
+          }}
+        />
       </div>
+
+      {/* Optional: Add a subtle gradient overlay for better text readability */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent pointer-events-none"></div>
 
       {/* Content Container */}
       <div className="relative z-10 h-full flex flex-col justify-between p-4">
