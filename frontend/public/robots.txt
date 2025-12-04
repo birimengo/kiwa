@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /login
+Disallow: /register
+
+Sitemap: https://kiwa-general-electricals.vercel.app/sitemap.xml
+
+# Uganda focused
+Host: https://kiwa-general-electricals.vercel.app
+
+# Crawl delay for better performance
+Crawl-delay: 1

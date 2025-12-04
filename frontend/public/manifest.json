@@ -1,28 +1,52 @@
 {
-  "name": "ElectroShop - Electronics Store",
-  "short_name": "ElectroShop",
-  "description": "Your electronics e-commerce store",
+  "name": "Kiwa General Electricals - Electrical Store Uganda",
+  "short_name": "Kiwa Electricals",
+  "description": "☎️ 0751808507 | Wholesale & Retail Electricals in Uganda. Home Appliances, Industrial Equipment, Generators, Solar Systems",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#000000",
+  "theme_color": "#2A4365",
   "orientation": "portrait-primary",
+  "categories": ["shopping", "business", "utilities"],
+  "lang": "en-UG",
+  "dir": "ltr",
   "icons": [
     {
       "src": "/trade-svgrepo-com.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any"
+      "purpose": "any maskable"
     },
     {
-      "src": "/trade-svgrepo-com.svg",
+      "src": "/icon-192.png",
       "sizes": "192x192",
-      "type": "image/svg+xml"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
-      "src": "/trade-svgrepo-com.svg",
+      "src": "/icon-512.png",
       "sizes": "512x512",
-      "type": "image/svg+xml"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
-  ]
+  ],
+  "shortcuts": [
+    {
+      "name": "Call Now",
+      "short_name": "Call",
+      "description": "Call Kiwa Electricals Uganda",
+      "url": "/call",
+      "icons": [{ "src": "/phone-icon.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Browse Products",
+      "short_name": "Products",
+      "description": "View all electrical products",
+      "url": "/products",
+      "icons": [{ "src": "/products-icon.png", "sizes": "96x96" }]
+    }
+  ],
+  "related_applications": [],
+  "prefer_related_applications": false
 }

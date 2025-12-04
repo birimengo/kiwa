@@ -4,7 +4,7 @@ import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import Navbar from './components/layout/Navbar';
 import InstallPrompt from './components/InstallPrompt';
-import ManualInstall from './components/ManualInstall'; // ADD THIS IMPORT
+import ManualInstall from './components/ManualInstall';
 import Products from './pages/Products';
 import ProductDetail from './pages/ProductDetail';
 import Cart from './pages/Cart';
@@ -14,12 +14,20 @@ import Admin from './pages/Admin';
 import OrderSuccess from './pages/OrderSuccess';
 import MyOrders from './pages/MyOrders';
 import AdminOrders from './pages/AdminOrders';
+import SEO from './components/SEO'; // ADD THIS IMPORT
 
 function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
         <Router>
+          {/* GLOBAL DEFAULT SEO - WORKS FOR ALL PAGES */}
+          <SEO
+            title="Kiwa General Electricals - Electrical & Electronics Uganda"
+            description="Uganda's leading electrical wholesale & retail store. ☎️ 0751808507 | gogreenuganda70@gmail.com"
+            keywords="electrical Uganda, electronics Kampala, wholesale electricals, generators, solar systems"
+          />
+          
           <div className="min-h-screen theme-bg flex flex-col">
             <Navbar />
             <main className="flex-grow">
@@ -38,7 +46,7 @@ function App() {
             </main>
             {/* INSTALL PROMPT COMPONENTS */}
             <InstallPrompt />
-            <ManualInstall /> {/* ADD THIS COMPONENT */}
+            <ManualInstall />
           </div>
         </Router>
       </AuthProvider>
