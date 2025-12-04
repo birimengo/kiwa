@@ -1,4 +1,3 @@
-// vite.config.js
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react-swc'
 import tailwindcss from '@tailwindcss/vite'
@@ -23,5 +22,13 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-  }
+    // Ensure static files are copied
+    rollupOptions: {
+      output: {
+        manualChunks: undefined
+      }
+    }
+  },
+  // Serve static files from public directory
+  publicDir: 'public'
 })

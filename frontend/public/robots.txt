@@ -4,10 +4,11 @@ Disallow: /admin
 Disallow: /login
 Disallow: /register
 
+# Crawl delay for better performance
+Crawl-delay: 1
+
+# Sitemap location - FIXED FORMAT
 Sitemap: https://kiwa-general-electricals.vercel.app/sitemap.xml
 
 # Uganda focused
 Host: https://kiwa-general-electricals.vercel.app
-
-# Crawl delay for better performance
-Crawl-delay: 1
