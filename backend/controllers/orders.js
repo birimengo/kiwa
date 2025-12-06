@@ -2,6 +2,8 @@ const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Sale = require('../models/Sale');
 const Notification = require('../models/Notification');
+const WhatsAppConfig = require('../models/WhatsAppConfig');
+const whatsappService = require('../services/whatsappService');
 const mongoose = require('mongoose');
 
 // Generate order number
@@ -82,6 +84,62 @@ async function createOrderNotification(order, type = 'new_order', note = '') {
     console.log(`📢 Notifications created for order ${order.orderNumber}`);
   } catch (error) {
     console.error('❌ Error creating notification:', error);
+  }
+}
+
+// Helper function to send WhatsApp notifications
+async function sendWhatsAppOrderNotification(order, notificationType, note = '') {
+  try {
+    let notificationPrefKey = '';
+    switch(notificationType) {
+      case 'new_order':
+        notificationPrefKey = 'newOrders';
+        break;
+      case 'processing':
+      case 'delivered':
+      case 'confirmed':
+      case 'cancelled':
+        notificationPrefKey = 'orderUpdates';
+        break;
+      default:
+        return;
+    }
+    
+    // Get all active admin WhatsApp configurations
+    const adminConfigs = await WhatsAppConfig.find({
+      isActive: true,
+      [`notifications.${notificationPrefKey}`]: true
+    }).populate('user', 'name email');
+
+    if (adminConfigs.length === 0) {
+      console.log('📱 No active WhatsApp configurations found for admins');
+      return;
+    }
+
+    // Send notification to each admin
+    const promises = adminConfigs.map(async (config) => {
+      if (config.phoneNumber && config.apiKey) {
+        try {
+          await whatsappService.sendOrderNotification(
+            {
+              phoneNumber: config.phoneNumber,
+              apiKey: config.apiKey
+            },
+            order,
+            notificationType,
+            note
+          );
+        } catch (error) {
+          console.error(`❌ Error sending WhatsApp to ${config.phoneNumber}:`, error.message);
+        }
+      }
+    });
+
+    await Promise.all(promises);
+    console.log(`📱 WhatsApp notifications sent for order ${order.orderNumber}`);
+    
+  } catch (error) {
+    console.error('❌ Error in WhatsApp notification system:', error);
   }
 }
 
@@ -289,6 +347,9 @@ exports.createOrder = async (req, res) => {
 
     // Create notification for admin users
     await createOrderNotification(order, 'new_order');
+    
+    // Send WhatsApp notification for new order
+    await sendWhatsAppOrderNotification(order, 'new_order');
 
     console.log('✅ Committing transaction...');
     await session.commitTransaction();
@@ -480,16 +541,25 @@ exports.updateOrderStatus = async (req, res) => {
       order.deliveredBy = req.user.id;
       // Create notification for delivered order
       await createOrderNotification(order, 'delivered', note);
+      // Send WhatsApp notification
+      await sendWhatsAppOrderNotification(order, 'delivered', note);
     } else if (orderStatus === 'cancelled') {
       order.cancelledAt = new Date();
       order.cancellationReason = note || 'Order cancelled by admin';
       // Create notification for cancelled order
       await createOrderNotification(order, 'cancelled', order.cancellationReason);
+      // Send WhatsApp notification
+      await sendWhatsAppOrderNotification(order, 'cancelled', order.cancellationReason);
       // Restore product stock if order is cancelled
       await restoreOrderStock(order, req.user.id, session);
     } else if (orderStatus === 'processing') {
       // Create notification for processing order
       await createOrderNotification(order, 'processing', note);
+      // Send WhatsApp notification
+      await sendWhatsAppOrderNotification(order, 'processing', note);
+    } else if (orderStatus === 'confirmed') {
+      // Send WhatsApp notification for confirmed order
+      await sendWhatsAppOrderNotification(order, 'confirmed', note);
     }
     
     await order.save({ session });
@@ -582,6 +652,9 @@ exports.cancelOrder = async (req, res) => {
     // Create notification for cancelled order
     await createOrderNotification(order, 'cancelled', order.cancellationReason);
     
+    // Send WhatsApp notification
+    await sendWhatsAppOrderNotification(order, 'cancelled', order.cancellationReason);
+    
     // Restore product stock
     await restoreOrderStock(order, req.user.id, session);
     
@@ -662,6 +735,9 @@ exports.processOrder = async (req, res) => {
     // Create notification for processing order
     await createOrderNotification(order, 'processing');
     
+    // Send WhatsApp notification
+    await sendWhatsAppOrderNotification(order, 'processing');
+    
     await order.save({ session });
     await session.commitTransaction();
     await session.endSession();
@@ -739,6 +815,9 @@ exports.deliverOrder = async (req, res) => {
     
     // Create notification for delivered order
     await createOrderNotification(order, 'delivered');
+    
+    // Send WhatsApp notification
+    await sendWhatsAppOrderNotification(order, 'delivered');
     
     await order.save({ session });
     await session.commitTransaction();
@@ -818,6 +897,9 @@ exports.rejectOrder = async (req, res) => {
     
     // Create notification for rejected order
     await createOrderNotification(order, 'cancelled', order.cancellationReason);
+    
+    // Send WhatsApp notification
+    await sendWhatsAppOrderNotification(order, 'cancelled', order.cancellationReason);
     
     // Restore product stock
     await restoreOrderStock(order, req.user.id, session);
@@ -911,6 +993,9 @@ exports.confirmDelivery = async (req, res) => {
     
     // Create notification for confirmed order
     await createOrderNotification(order, 'confirmed', confirmationNote);
+    
+    // Send WhatsApp notification
+    await sendWhatsAppOrderNotification(order, 'confirmed', confirmationNote);
     
     // Create sale record when order is confirmed
     const sale = await createSaleFromOrder(order, req.user.id, session);

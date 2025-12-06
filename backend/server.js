@@ -33,7 +33,7 @@ const dashboardRoutes = require('./routes/dashboard');
 const orderRoutes = require('./routes/orders');
 const notificationRoutes = require('./routes/notifications');
 // const cartRoutes = require('./routes/cart'); // COMMENT OUT FOR NOW
-
+const whatsappRoutes = require('./routes/whatsapp');
 // Route middleware
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
@@ -44,7 +44,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/notifications', notificationRoutes);
 // app.use('/api/cart', cartRoutes); // COMMENT OUT FOR NOW
-
+app.use('/api/whatsapp', whatsappRoutes);
 // Health check route
 app.get('/api/health', (req, res) => {
   res.json({
