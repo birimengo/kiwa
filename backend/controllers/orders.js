@@ -1,6 +1,7 @@
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Sale = require('../models/Sale');
+const Notification = require('../models/Notification');
 const mongoose = require('mongoose');
 
 // Generate order number
@@ -28,6 +29,61 @@ const generateOrderNumber = async () => {
   
   return `ORD-${year}${month}${day}-${String(sequence).padStart(4, '0')}`;
 };
+
+// Helper function to create notification for admins
+async function createOrderNotification(order, type = 'new_order', note = '') {
+  try {
+    const User = require('../models/User');
+    const adminUsers = await User.find({ role: 'admin', isActive: true }).select('_id');
+    
+    if (adminUsers.length === 0) {
+      console.log('⚠️ No admin users found for notification');
+      return;
+    }
+    
+    let message = '';
+    switch(type) {
+      case 'new_order':
+        message = `New order #${order.orderNumber} from ${order.customer.name}`;
+        break;
+      case 'cancelled':
+        message = `Order #${order.orderNumber} has been cancelled`;
+        break;
+      case 'delivered':
+        message = `Order #${order.orderNumber} has been delivered`;
+        break;
+      case 'confirmed':
+        message = `Order #${order.orderNumber} delivery confirmed by customer`;
+        break;
+      case 'processing':
+        message = `Order #${order.orderNumber} is now being processed`;
+        break;
+      default:
+        message = `Order #${order.orderNumber} has been updated`;
+    }
+    
+    if (note) {
+      message += `: ${note}`;
+    }
+    
+    const notificationPromises = adminUsers.map(admin => {
+      return Notification.create({
+        user: admin._id,
+        order: order._id,
+        orderNumber: order.orderNumber,
+        customerName: order.customer.name,
+        totalAmount: order.totalAmount,
+        type: type,
+        message: message
+      });
+    });
+    
+    await Promise.all(notificationPromises);
+    console.log(`📢 Notifications created for order ${order.orderNumber}`);
+  } catch (error) {
+    console.error('❌ Error creating notification:', error);
+  }
+}
 
 // @desc    Create new order
 // @route   POST /api/orders
@@ -231,6 +287,9 @@ exports.createOrder = async (req, res) => {
       }
     }
 
+    // Create notification for admin users
+    await createOrderNotification(order, 'new_order');
+
     console.log('✅ Committing transaction...');
     await session.commitTransaction();
     await session.endSession();
@@ -419,12 +478,18 @@ exports.updateOrderStatus = async (req, res) => {
     if (orderStatus === 'delivered') {
       order.deliveredAt = new Date();
       order.deliveredBy = req.user.id;
+      // Create notification for delivered order
+      await createOrderNotification(order, 'delivered', note);
     } else if (orderStatus === 'cancelled') {
       order.cancelledAt = new Date();
       order.cancellationReason = note || 'Order cancelled by admin';
-      
+      // Create notification for cancelled order
+      await createOrderNotification(order, 'cancelled', order.cancellationReason);
       // Restore product stock if order is cancelled
       await restoreOrderStock(order, req.user.id, session);
+    } else if (orderStatus === 'processing') {
+      // Create notification for processing order
+      await createOrderNotification(order, 'processing', note);
     }
     
     await order.save({ session });
@@ -514,6 +579,9 @@ exports.cancelOrder = async (req, res) => {
       changedBy: req.user.id
     });
     
+    // Create notification for cancelled order
+    await createOrderNotification(order, 'cancelled', order.cancellationReason);
+    
     // Restore product stock
     await restoreOrderStock(order, req.user.id, session);
     
@@ -591,6 +659,9 @@ exports.processOrder = async (req, res) => {
       changedBy: req.user.id
     });
     
+    // Create notification for processing order
+    await createOrderNotification(order, 'processing');
+    
     await order.save({ session });
     await session.commitTransaction();
     await session.endSession();
@@ -665,6 +736,9 @@ exports.deliverOrder = async (req, res) => {
       note: `Order delivered by admin`,
       changedBy: req.user.id
     });
+    
+    // Create notification for delivered order
+    await createOrderNotification(order, 'delivered');
     
     await order.save({ session });
     await session.commitTransaction();
@@ -741,6 +815,9 @@ exports.rejectOrder = async (req, res) => {
       note: `Order rejected by admin. Reason: ${reason || 'Not specified'}`,
       changedBy: req.user.id
     });
+    
+    // Create notification for rejected order
+    await createOrderNotification(order, 'cancelled', order.cancellationReason);
     
     // Restore product stock
     await restoreOrderStock(order, req.user.id, session);
@@ -831,6 +908,9 @@ exports.confirmDelivery = async (req, res) => {
       note: `Delivery confirmed by customer. Note: ${confirmationNote || 'No note provided'}`,
       changedBy: req.user.id
     });
+    
+    // Create notification for confirmed order
+    await createOrderNotification(order, 'confirmed', confirmationNote);
     
     // Create sale record when order is confirmed
     const sale = await createSaleFromOrder(order, req.user.id, session);
