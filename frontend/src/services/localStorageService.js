@@ -43,6 +43,15 @@ class LocalStorageService {
   static saveProducts(products) {
     try {
       localStorage.setItem(LOCAL_STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+      
+      // Dispatch event when products are saved
+      window.dispatchEvent(new CustomEvent('productsSavedToLocalStorage', {
+        detail: { 
+          products: products,
+          timestamp: new Date().toISOString() 
+        }
+      }));
+      
       return true;
     } catch (error) {
       console.error('❌ Error saving products to localStorage:', error);
@@ -80,6 +89,16 @@ class LocalStorageService {
         this.updateProductStats();
         
         console.log(`✅ Product updated: ${updatedProduct.name}`);
+        
+        // Dispatch event for real-time updates
+        window.dispatchEvent(new CustomEvent('productUpdated', {
+          detail: { 
+            productId: productId,
+            product: updatedProduct,
+            timestamp: new Date().toISOString() 
+          }
+        }));
+        
         return updatedProduct;
       }
       return null;
@@ -111,6 +130,15 @@ class LocalStorageService {
       this.updateProductStats();
       
       console.log(`✅ Product added: ${newProduct.name}`);
+      
+      // Dispatch event for real-time updates
+      window.dispatchEvent(new CustomEvent('productAdded', {
+        detail: { 
+          product: newProduct,
+          timestamp: new Date().toISOString() 
+        }
+      }));
+      
       return newProduct;
     } catch (error) {
       console.error('❌ Error adding product to localStorage:', error);
@@ -126,10 +154,74 @@ class LocalStorageService {
       this.updateProductStats();
       
       console.log(`✅ Product deleted: ${productId}`);
+      
+      // Dispatch event for real-time updates
+      window.dispatchEvent(new CustomEvent('productDeleted', {
+        detail: { 
+          productId: productId,
+          timestamp: new Date().toISOString() 
+        }
+      }));
+      
       return true;
     } catch (error) {
       console.error('❌ Error deleting product from localStorage:', error);
       return false;
+    }
+  }
+
+  // ============ IMMEDIATE PRODUCT STOCK UPDATES ============
+  static updateProductStockImmediately(productId, quantitySold) {
+    try {
+      console.log(`🔄 Immediate stock update for product ${productId}: -${quantitySold}`);
+      
+      const products = this.getProducts();
+      const productIndex = products.findIndex(p => p._id === productId);
+      
+      if (productIndex === -1) {
+        console.error(`❌ Product not found: ${productId}`);
+        return null;
+      }
+      
+      const product = products[productIndex];
+      const previousStock = product.stock || 0;
+      const newStock = Math.max(0, previousStock - quantitySold);
+      
+      // Update product
+      const updatedProduct = {
+        ...product,
+        stock: newStock,
+        totalSold: (product.totalSold || 0) + quantitySold,
+        totalRevenue: (product.totalRevenue || 0) + (product.sellingPrice * quantitySold),
+        lastSold: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        stockHistory: [
+          ...(product.stockHistory || []),
+          {
+            previousStock,
+            newStock,
+            unitsChanged: -quantitySold,
+            type: 'sale',
+            reference: null,
+            referenceModel: 'ImmediateUpdate',
+            date: new Date().toISOString(),
+            notes: `Immediate stock update: ${quantitySold} units sold`
+          }
+        ]
+      };
+      
+      products[productIndex] = updatedProduct;
+      this.saveProducts(products);
+      
+      console.log(`📊 Stock updated: ${product.name} ${previousStock} → ${newStock}`);
+      
+      // Notify all components immediately
+      this.notifyStockChange(productId, previousStock, newStock, 'immediate_sale');
+      
+      return updatedProduct;
+    } catch (error) {
+      console.error('❌ Error updating product stock immediately:', error);
+      return null;
     }
   }
 
@@ -276,6 +368,16 @@ class LocalStorageService {
       });
       
       console.log(`✅ Offline sale created: ${offlineSale.saleNumber}`);
+      
+      // Dispatch global event to notify all components
+      window.dispatchEvent(new CustomEvent('offlineSaleCreated', {
+        detail: { 
+          sale: offlineSale,
+          productsUpdated: processedItems.map(item => item.product),
+          timestamp: new Date().toISOString() 
+        }
+      }));
+      
       return offlineSale;
       
     } catch (error) {
@@ -287,33 +389,34 @@ class LocalStorageService {
   // ============ PRODUCT STOCK MANAGEMENT ============
   static updateProductStockAfterSale(sale) {
     try {
+      console.log('🔄 Updating product stock after sale:', sale.saleNumber);
+      
       const products = this.getProducts();
-      let allStockUpdated = true;
+      const updatedProducts = [...products];
+      const updatedProductIds = [];
       
       sale.items.forEach(saleItem => {
-        const productIndex = products.findIndex(p => 
+        const productIndex = updatedProducts.findIndex(p => 
           p._id === saleItem.product || p._id === saleItem.productId
         );
         
         if (productIndex === -1) {
           console.error(`❌ Product not found for sale item: ${saleItem.productName}`);
-          allStockUpdated = false;
           return;
         }
         
-        const product = products[productIndex];
+        const product = updatedProducts[productIndex];
         const previousStock = product.stock || 0;
         
         if (previousStock < saleItem.quantity) {
           console.error(`❌ Insufficient stock for ${product.name}: ${previousStock} available, ${saleItem.quantity} requested`);
-          allStockUpdated = false;
           return;
         }
         
         const newStock = previousStock - saleItem.quantity;
         
-        // Update product
-        products[productIndex] = {
+        // Create updated product object
+        const updatedProduct = {
           ...product,
           stock: newStock,
           totalSold: (product.totalSold || 0) + saleItem.quantity,
@@ -333,17 +436,30 @@ class LocalStorageService {
             }
           ]
         };
+        
+        console.log(`📦 Stock update for ${product.name}: ${previousStock} → ${newStock}`);
+        updatedProducts[productIndex] = updatedProduct;
+        updatedProductIds.push(product._id);
       });
       
-      if (allStockUpdated) {
-        this.saveProducts(products);
-        this.updateProductStats();
-        console.log('✅ Product stock updated for sale');
-        return true;
-      } else {
-        console.error('❌ Some products could not be updated');
-        return false;
-      }
+      // Save all updated products
+      this.saveProducts(updatedProducts);
+      this.updateProductStats();
+      
+      console.log('✅ All product stocks updated successfully');
+      
+      // Dispatch global event with detailed information
+      window.dispatchEvent(new CustomEvent('productsStockUpdated', {
+        detail: { 
+          saleNumber: sale.saleNumber,
+          updatedProductIds: updatedProductIds,
+          products: updatedProducts,
+          timestamp: new Date().toISOString(),
+          source: 'sale'
+        }
+      }));
+      
+      return true;
       
     } catch (error) {
       console.error('❌ Error updating product stock after sale:', error);
@@ -365,7 +481,7 @@ class LocalStorageService {
       const previousStock = product.stock || 0;
       const newStock = previousStock + quantity;
       
-      products[productIndex] = {
+      const updatedProduct = {
         ...product,
         stock: newStock,
         restockedQuantity: (product.restockedQuantity || 0) + quantity,
@@ -385,6 +501,7 @@ class LocalStorageService {
         ]
       };
       
+      products[productIndex] = updatedProduct;
       this.saveProducts(products);
       this.updateProductStats();
       
@@ -401,7 +518,18 @@ class LocalStorageService {
       });
       
       console.log(`✅ Product restocked: ${product.name} (+${quantity})`);
-      return products[productIndex];
+      
+      // Dispatch event for real-time updates
+      window.dispatchEvent(new CustomEvent('productRestocked', {
+        detail: { 
+          productId: productId,
+          product: updatedProduct,
+          quantity: quantity,
+          timestamp: new Date().toISOString() 
+        }
+      }));
+      
+      return updatedProduct;
       
     } catch (error) {
       console.error('❌ Error restocking product:', error);
@@ -582,6 +710,12 @@ class LocalStorageService {
       };
       
       console.log(`🔄 Sale sync completed: ${syncedCount}/${sales.length} synced`);
+      
+      // Dispatch event when sync is completed
+      window.dispatchEvent(new CustomEvent('salesSyncCompleted', {
+        detail: result
+      }));
+      
       return result;
       
     } catch (error) {
@@ -707,6 +841,12 @@ class LocalStorageService {
       };
       
       console.log(`🔄 Full sync completed: ${totalSynced} items synced, ${totalErrors} errors`);
+      
+      // Dispatch event when full sync is completed
+      window.dispatchEvent(new CustomEvent('fullSyncCompleted', {
+        detail: finalResult
+      }));
+      
       return finalResult;
       
     } catch (error) {
@@ -912,6 +1052,16 @@ class LocalStorageService {
       }
       
       console.log('✅ Backup restored successfully');
+      
+      // Dispatch event after restore
+      window.dispatchEvent(new CustomEvent('dataRestored', {
+        detail: {
+          products: backup.data.products?.length || 0,
+          sales: backup.data.sales?.length || 0,
+          timestamp: new Date().toISOString()
+        }
+      }));
+      
       return { 
         success: true, 
         message: 'Backup restored successfully',
@@ -1007,9 +1157,269 @@ class LocalStorageService {
     const interval = localStorage.getItem('auto_sync_interval');
     return interval ? parseInt(interval) : 5;
   }
+
+  // ============ NEW METHODS FOR REAL-TIME UPDATES ============
+  static forceProductRefresh() {
+    try {
+      const products = this.getProducts();
+      
+      // Dispatch event to force all components to refresh
+      window.dispatchEvent(new CustomEvent('forceProductRefresh', {
+        detail: {
+          products: products,
+          timestamp: new Date().toISOString()
+        }
+      }));
+      
+      console.log('🔄 Force product refresh triggered');
+      return true;
+    } catch (error) {
+      console.error('❌ Error forcing product refresh:', error);
+      return false;
+    }
+  }
+
+  static notifyStockChange(productId, oldStock, newStock, reason = 'sale') {
+    try {
+      window.dispatchEvent(new CustomEvent('productStockChanged', {
+        detail: {
+          productId: productId,
+          oldStock: oldStock,
+          newStock: newStock,
+          change: newStock - oldStock,
+          reason: reason,
+          timestamp: new Date().toISOString()
+        }
+      }));
+      
+      console.log(`📊 Stock change notified: ${productId} ${oldStock} → ${newStock} (${reason})`);
+      return true;
+    } catch (error) {
+      console.error('❌ Error notifying stock change:', error);
+      return false;
+    }
+  }
+
+  // Add this method to force immediate UI updates
+  static forceStockRefresh() {
+    window.dispatchEvent(new CustomEvent('forceStockRefresh', {
+      detail: {
+        timestamp: new Date().toISOString(),
+        source: 'manual_refresh'
+      }
+    }));
+  }
+
+  // Get products that have been updated recently (for highlighting)
+  static getRecentlyUpdatedProducts(withinMinutes = 5) {
+    try {
+      const products = this.getProducts();
+      const cutoff = new Date(Date.now() - withinMinutes * 60000);
+      
+      return products.filter(product => {
+        const updatedAt = new Date(product.updatedAt || product.createdAt || 0);
+        return updatedAt > cutoff;
+      });
+    } catch (error) {
+      console.error('❌ Error getting recently updated products:', error);
+      return [];
+    }
+  }
+
+  // ============ BATCH PRODUCT STOCK UPDATES ============
+  static updateMultipleProductStocks(stockUpdates) {
+    try {
+      console.log('🔄 Batch updating product stocks:', stockUpdates);
+      
+      const products = this.getProducts();
+      const updatedProducts = [...products];
+      const updatedProductIds = [];
+      
+      stockUpdates.forEach(update => {
+        const productIndex = updatedProducts.findIndex(p => p._id === update.productId);
+        
+        if (productIndex === -1) {
+          console.error(`❌ Product not found: ${update.productId}`);
+          return;
+        }
+        
+        const product = updatedProducts[productIndex];
+        const previousStock = product.stock || 0;
+        const newStock = Math.max(0, previousStock - update.quantitySold);
+        
+        // Create updated product object
+        const updatedProduct = {
+          ...product,
+          stock: newStock,
+          totalSold: (product.totalSold || 0) + update.quantitySold,
+          totalRevenue: (product.totalRevenue || 0) + (product.sellingPrice * update.quantitySold),
+          lastSold: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          stockHistory: [
+            ...(product.stockHistory || []),
+            {
+              previousStock,
+              newStock,
+              unitsChanged: -update.quantitySold,
+              type: 'sale',
+              reference: update.referenceId,
+              referenceModel: 'BatchUpdate',
+              date: new Date().toISOString(),
+              notes: update.notes || `Batch update: ${update.quantitySold} units sold`
+            }
+          ]
+        };
+        
+        updatedProducts[productIndex] = updatedProduct;
+        updatedProductIds.push(product._id);
+        
+        console.log(`📦 Batch stock update: ${product.name} ${previousStock} → ${newStock}`);
+      });
+      
+      // Save all updated products
+      this.saveProducts(updatedProducts);
+      this.updateProductStats();
+      
+      console.log(`✅ Batch update completed: ${updatedProductIds.length} products updated`);
+      
+      // Dispatch event for batch updates
+      window.dispatchEvent(new CustomEvent('productsBatchUpdated', {
+        detail: {
+          updatedProductIds: updatedProductIds,
+          products: updatedProducts,
+          timestamp: new Date().toISOString(),
+          source: 'batch_update'
+        }
+      }));
+      
+      return {
+        success: true,
+        updatedCount: updatedProductIds.length,
+        productIds: updatedProductIds
+      };
+      
+    } catch (error) {
+      console.error('❌ Error in batch product stock update:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // ============ PRODUCT STOCK VALIDATION ============
+  static validateStockAvailability(productId, requestedQuantity) {
+    try {
+      const product = this.getProduct(productId);
+      
+      if (!product) {
+        return {
+          valid: false,
+          message: 'Product not found',
+          availableStock: 0
+        };
+      }
+      
+      const currentStock = product.stock || 0;
+      const availableStock = currentStock;
+      
+      if (currentStock < requestedQuantity) {
+        return {
+          valid: false,
+          message: `Insufficient stock. Available: ${currentStock}, Requested: ${requestedQuantity}`,
+          availableStock: currentStock
+        };
+      }
+      
+      return {
+        valid: true,
+        message: 'Stock available',
+        availableStock: currentStock,
+        product: product
+      };
+    } catch (error) {
+      console.error('❌ Error validating stock availability:', error);
+      return {
+        valid: false,
+        message: 'Error validating stock',
+        availableStock: 0
+      };
+    }
+  }
+
+  // ============ CACHE MANAGEMENT ============
+  static clearProductCache() {
+    try {
+      // Clear any cached timestamps
+      localStorage.removeItem('products_cache_timestamp');
+      localStorage.removeItem('products_last_fetched');
+      
+      // Dispatch event for cache clearing
+      window.dispatchEvent(new CustomEvent('productCacheCleared', {
+        detail: {
+          timestamp: new Date().toISOString(),
+          source: 'manual_clear'
+        }
+      }));
+      
+      console.log('🧹 Product cache cleared');
+      return true;
+    } catch (error) {
+      console.error('❌ Error clearing product cache:', error);
+      return false;
+    }
+  }
+
+  // ============ EMERGENCY STOCK RESET ============
+  static emergencyStockReset(productId, newStock, reason = 'emergency_reset') {
+    try {
+      const product = this.getProduct(productId);
+      
+      if (!product) {
+        console.error(`❌ Product not found: ${productId}`);
+        return null;
+      }
+      
+      const previousStock = product.stock || 0;
+      
+      const updatedProduct = {
+        ...product,
+        stock: newStock,
+        updatedAt: new Date().toISOString(),
+        stockHistory: [
+          ...(product.stockHistory || []),
+          {
+            previousStock,
+            newStock,
+            unitsChanged: newStock - previousStock,
+            type: 'emergency',
+            reference: null,
+            referenceModel: 'Emergency',
+            date: new Date().toISOString(),
+            notes: reason
+          }
+        ]
+      };
+      
+      this.updateProduct(productId, updatedProduct);
+      
+      console.log(`🚨 Emergency stock reset: ${product.name} ${previousStock} → ${newStock}`);
+      
+      // Notify all components
+      this.notifyStockChange(productId, previousStock, newStock, 'emergency_reset');
+      
+      return updatedProduct;
+    } catch (error) {
+      console.error('❌ Error in emergency stock reset:', error);
+      return null;
+    }
+  }
 }
 
 // Initialize on import
 LocalStorageService.initialize();
+
+// Make LOCAL_STORAGE_KEYS accessible
+LocalStorageService.LOCAL_STORAGE_KEYS = LOCAL_STORAGE_KEYS;
 
 export default LocalStorageService;
