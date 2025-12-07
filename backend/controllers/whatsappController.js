@@ -36,7 +36,8 @@ exports.getConfig = async (req, res) => {
 
     console.log(`✅ WhatsApp config found for user ${req.user.id}:`, {
       isActive: config.isActive,
-      phoneConfigured: !!config.phoneNumber
+      phoneConfigured: !!config.phoneNumber,
+      lastTestStatus: config.lastTestStatus
     });
 
     res.json({
@@ -64,6 +65,7 @@ exports.saveConfig = async (req, res) => {
     console.log('📱 Saving WhatsApp config:', { 
       phoneNumber, 
       hasApiKey: !!apiKey,
+      apiKeyLength: apiKey?.length,
       isActive,
       notifications 
     });
@@ -71,6 +73,7 @@ exports.saveConfig = async (req, res) => {
     // Validate required fields when isActive is true
     if (isActive) {
       if (!phoneNumber || !apiKey) {
+        console.log('❌ Missing phone number or API key');
         return res.status(400).json({
           success: false,
           message: 'Phone number and API key are required when activating WhatsApp notifications'
@@ -82,41 +85,19 @@ exports.saveConfig = async (req, res) => {
       const cleanedPhone = phoneNumber.replace(/\s/g, '');
       
       if (!phoneRegex.test(cleanedPhone)) {
+        console.log('❌ Invalid phone number format:', phoneNumber);
         return res.status(400).json({
           success: false,
           message: 'Invalid phone number format. Use format: +256700000000'
         });
       }
-    }
-
-    // Format phone number if provided
-    let formattedPhone = null;
-    if (phoneNumber) {
-      formattedPhone = whatsappService.formatPhoneForApi(phoneNumber);
-      console.log(`📱 Formatted phone: ${phoneNumber} -> ${formattedPhone}`);
-    }
-
-    // Verify API key if provided and phone number exists
-    if (apiKey && phoneNumber && isActive) {
-      console.log('📱 Verifying API key with test message...');
-      try {
-        const verification = await whatsappService.verifyApiKey(formattedPhone, apiKey);
-        
-        if (!verification.success) {
-          console.log('❌ API key verification failed:', verification.message);
-          return res.status(400).json({
-            success: false,
-            message: 'API key verification failed. Please check your API key and try again.',
-            error: verification.message
-          });
-        }
-        console.log('✅ API key verified successfully');
-      } catch (verifyError) {
-        console.error('❌ API key verification error:', verifyError.message);
+      
+      // Basic API key validation
+      if (apiKey.length < 5) {
+        console.log('❌ API key too short:', apiKey.length);
         return res.status(400).json({
           success: false,
-          message: 'API key verification failed. Please check your phone number and API key.',
-          error: verifyError.message
+          message: 'API key appears to be too short'
         });
       }
     }
@@ -124,7 +105,7 @@ exports.saveConfig = async (req, res) => {
     // Prepare config data
     const configData = {
       user: req.user.id,
-      phoneNumber: formattedPhone,
+      phoneNumber: phoneNumber,
       apiKey: apiKey,
       isActive: isActive,
       notifications: {
@@ -133,46 +114,49 @@ exports.saveConfig = async (req, res) => {
         payments: notifications.payments !== undefined ? notifications.payments : true,
         lowStock: notifications.lowStock !== undefined ? notifications.lowStock : true
       },
-      lastTestAt: isActive ? new Date() : null,
-      lastTestStatus: isActive ? 'success' : 'pending',
       lastUpdated: new Date()
     };
 
-    // Find and update or create
-    let config = await WhatsAppConfig.findOne({ user: req.user.id });
-    
-    if (config) {
-      // Update existing config
-      config = await WhatsAppConfig.findOneAndUpdate(
-        { user: req.user.id },
-        configData,
-        { 
-          new: true, 
-          runValidators: true,
-          upsert: true
-        }
-      ).select('-apiKey'); // Don't return API key
-    } else {
-      // Create new config
-      config = await WhatsAppConfig.create(configData);
-      // Remove API key from response
-      config = config.toObject();
-      delete config.apiKey;
+    // Update last test info only if activating
+    if (isActive && phoneNumber && apiKey) {
+      configData.lastTestAt = new Date();
+      configData.lastTestStatus = 'pending'; // Will be updated after test
+    } else if (!isActive) {
+      configData.lastTestStatus = 'pending';
     }
+
+    // Use findOneAndUpdate with upsert
+    const config = await WhatsAppConfig.findOneAndUpdate(
+      { user: req.user.id },
+      configData,
+      { 
+        new: true, 
+        runValidators: true,
+        upsert: true,
+        setDefaultsOnInsert: true
+      }
+    );
+
+    // Don't send API key in response
+    const responseConfig = config.toObject();
+    delete responseConfig.apiKey;
 
     console.log(`✅ WhatsApp configuration saved for user ${req.user.id}:`, {
       isActive: config.isActive,
-      phoneConfigured: !!config.phoneNumber
+      phoneConfigured: !!config.phoneNumber,
+      configId: config._id,
+      lastTestStatus: config.lastTestStatus
     });
 
     res.json({
       success: true,
       message: 'WhatsApp configuration saved successfully',
-      config: config
+      config: responseConfig
     });
 
   } catch (error) {
     console.error('❌ Save WhatsApp config error:', error);
+    console.error('Error details:', error.message);
     res.status(500).json({
       success: false,
       message: 'Server error while saving WhatsApp configuration',
@@ -188,13 +172,25 @@ exports.testNotification = async (req, res) => {
   try {
     console.log('📱 Testing WhatsApp notification for user:', req.user.id);
     
-    const config = await WhatsAppConfig.findOne({ user: req.user.id });
+    // Get config WITH API key
+    const config = await WhatsAppConfig.findOne({ user: req.user.id }).select('+apiKey');
 
-    if (!config || !config.phoneNumber || !config.apiKey) {
+    if (!config) {
       console.log('❌ WhatsApp not configured for user:', req.user.id);
       return res.status(400).json({
         success: false,
         message: 'WhatsApp is not configured. Please add phone number and API key first.'
+      });
+    }
+
+    if (!config.phoneNumber || !config.apiKey) {
+      console.log('❌ WhatsApp incomplete configuration:', {
+        hasPhone: !!config.phoneNumber,
+        hasApiKey: !!config.apiKey
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'WhatsApp configuration incomplete. Please add phone number and API key.'
       });
     }
 
@@ -269,6 +265,7 @@ exports.testNotification = async (req, res) => {
 
   } catch (error) {
     console.error('❌ Test WhatsApp notification error:', error);
+    console.error('Stack trace:', error.stack);
     
     // Log the error
     try {
@@ -281,7 +278,8 @@ exports.testNotification = async (req, res) => {
         metadata: {
           test: true,
           error: error.message,
-          timestamp: new Date()
+          timestamp: new Date(),
+          stack: error.stack
         }
       });
     } catch (logError) {
@@ -358,11 +356,8 @@ exports.verifyApiKey = async (req, res) => {
       });
     }
 
-    // Format phone number
-    const formattedPhone = whatsappService.formatPhoneForApi(phoneNumber);
-    
     // Verify API key
-    const result = await whatsappService.verifyApiKey(formattedPhone, apiKey);
+    const result = await whatsappService.verifyApiKey(phoneNumber, apiKey);
 
     console.log(`📱 API key verification result:`, result.success ? 'Success' : 'Failed');
 
@@ -717,6 +712,45 @@ exports.getAllAdminConfigs = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while fetching admin configurations',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Quick test endpoint
+// @route   GET /api/whatsapp/quick-test
+// @access  Private/Admin
+exports.quickTest = async (req, res) => {
+  try {
+    console.log('📱 Quick WhatsApp test for user:', req.user.id);
+    
+    const config = await WhatsAppConfig.findOne({ user: req.user.id }).select('+apiKey');
+    
+    if (!config || !config.phoneNumber || !config.apiKey) {
+      return res.status(400).json({
+        success: false,
+        message: 'WhatsApp not configured'
+      });
+    }
+    
+    const testMessage = '✅ ElectroShop WhatsApp Test\n\nThis is a quick test message.\n\nTime: ' + new Date().toLocaleString();
+    const encodedMessage = encodeURIComponent(testMessage);
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${config.phoneNumber}&text=${encodedMessage}&apikey=${config.apiKey}`;
+    
+    console.log('📱 Quick test URL (partial):', url.substring(0, 80) + '...');
+    
+    const response = await axios.get(url, { timeout: 10000 });
+    
+    res.json({
+      success: true,
+      message: 'Quick test sent',
+      response: response.data
+    });
+    
+  } catch (error) {
+    console.error('❌ Quick test error:', error);
+    res.status(500).json({
+      success: false,
       error: error.message
     });
   }

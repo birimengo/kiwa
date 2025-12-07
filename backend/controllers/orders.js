@@ -3,7 +3,7 @@ const Product = require('../models/Product');
 const Sale = require('../models/Sale');
 const Notification = require('../models/Notification');
 const WhatsAppConfig = require('../models/WhatsAppConfig');
-const WhatsAppLog = require('../models/WhatsAppLog'); // Added for logging
+const WhatsAppLog = require('../models/WhatsAppLog');
 const whatsappService = require('../services/whatsappService');
 const mongoose = require('mongoose');
 
@@ -88,7 +88,7 @@ async function createOrderNotification(order, type = 'new_order', note = '') {
   }
 }
 
-// Helper function to send WhatsApp notifications - UPDATED WITH FIXES
+// Helper function to send WhatsApp notifications - COMPLETELY FIXED
 async function sendWhatsAppOrderNotification(order, notificationType, note = '') {
   try {
     let notificationPrefKey = '';
@@ -106,13 +106,17 @@ async function sendWhatsAppOrderNotification(order, notificationType, note = '')
         return;
     }
     
-    console.log(`📱 Preparing to send WhatsApp ${notificationType} notification for order ${order.orderNumber}`);
+    console.log(`📱 Preparing WhatsApp ${notificationType} notification for order ${order.orderNumber}`);
     
-    // Get all active admin WhatsApp configurations
+    // Get all active admin WhatsApp configurations - FIXED: Include API key
     const adminConfigs = await WhatsAppConfig.find({
       isActive: true,
-      [`notifications.${notificationPrefKey}`]: true
-    }).select('phoneNumber apiKey notifications user').lean();
+      [`notifications.${notificationPrefKey}`]: true,
+      phoneNumber: { $exists: true, $ne: null, $ne: '' },
+      apiKey: { $exists: true, $ne: null, $ne: '' }
+    })
+    .select('phoneNumber apiKey notifications user')
+    .populate('user', '_id name email role');
 
     console.log(`📱 Found ${adminConfigs.length} active WhatsApp configs for ${notificationType}`);
 
@@ -131,84 +135,94 @@ async function sendWhatsAppOrderNotification(order, notificationType, note = '')
       return;
     }
 
+    console.log(`📱 Sending WhatsApp to ${adminConfigs.length} admin(s) for order ${fullOrder.orderNumber}`);
+
     // Send notification to each admin
     const promises = adminConfigs.map(async (config) => {
-      if (config.phoneNumber && config.apiKey) {
-        try {
-          console.log(`📱 Sending WhatsApp to ${config.phoneNumber} for order ${fullOrder.orderNumber}`);
-          
-          const result = await whatsappService.sendOrderNotification(
-            {
-              phoneNumber: config.phoneNumber,
-              apiKey: config.apiKey
-            },
-            fullOrder,
-            notificationType,
-            note
-          );
-          
-          console.log(`✅ WhatsApp sent to ${config.phoneNumber}:`, result.success ? 'Success' : 'Failed');
-          
-          // Log the notification
-          try {
-            await WhatsAppLog.create({
-              user: config.user || null,
-              type: notificationType,
-              phoneNumber: config.phoneNumber,
-              orderNumber: fullOrder.orderNumber,
-              orderId: fullOrder._id,
-              success: result.success,
-              message: result.message,
-              response: result.data,
-              metadata: {
-                notificationType,
-                orderNumber: fullOrder.orderNumber,
-                customerName: fullOrder.customer?.name
-              }
-            });
-          } catch (logError) {
-            console.error('❌ Error logging WhatsApp notification:', logError.message);
-          }
-          
-          return result;
-        } catch (error) {
-          console.error(`❌ Error sending WhatsApp to ${config.phoneNumber}:`, error.message);
-          
-          // Log the error
-          try {
-            await WhatsAppLog.create({
-              user: config.user || null,
-              type: notificationType,
-              phoneNumber: config.phoneNumber,
-              orderNumber: fullOrder.orderNumber,
-              orderId: fullOrder._id,
-              success: false,
-              error: error.message,
-              metadata: {
-                notificationType,
-                orderNumber: fullOrder.orderNumber,
-                error: error.message
-              }
-            });
-          } catch (logError) {
-            console.error('❌ Error logging WhatsApp error:', logError.message);
-          }
-          
-          return { success: false, error: error.message };
+      try {
+        console.log(`📱 Processing WhatsApp for ${config.phoneNumber}`);
+        
+        if (!config.phoneNumber || !config.apiKey) {
+          console.log(`⚠️ Skipping: Missing phone or API key for ${config.phoneNumber || 'unknown'}`);
+          return null;
         }
-      } else {
-        console.log(`⚠️ Skipping WhatsApp for ${config.phoneNumber || 'unknown'}: missing phone or API key`);
-        return null;
+
+        const result = await whatsappService.sendOrderNotification(
+          {
+            phoneNumber: config.phoneNumber,
+            apiKey: config.apiKey
+          },
+          fullOrder,
+          notificationType,
+          note
+        );
+        
+        console.log(`✅ WhatsApp result for ${config.phoneNumber}:`, result.success ? 'Success' : 'Failed');
+        
+        // Log the notification
+        try {
+          await WhatsAppLog.create({
+            user: config.user?._id || null,
+            type: notificationType,
+            phoneNumber: config.phoneNumber,
+            orderNumber: fullOrder.orderNumber,
+            orderId: fullOrder._id,
+            success: result.success,
+            message: result.message,
+            response: result.data,
+            error: result.error,
+            metadata: {
+              notificationType,
+              orderNumber: fullOrder.orderNumber,
+              customerName: fullOrder.customer?.name,
+              adminId: config.user?._id
+            }
+          });
+        } catch (logError) {
+          console.error('❌ Error logging WhatsApp notification:', logError.message);
+        }
+        
+        return result;
+      } catch (error) {
+        console.error(`❌ Error sending WhatsApp to ${config.phoneNumber}:`, error.message);
+        
+        // Log the error
+        try {
+          await WhatsAppLog.create({
+            user: config.user?._id || null,
+            type: notificationType,
+            phoneNumber: config.phoneNumber,
+            orderNumber: fullOrder.orderNumber,
+            orderId: fullOrder._id,
+            success: false,
+            error: error.message,
+            metadata: {
+              notificationType,
+              orderNumber: fullOrder.orderNumber,
+              error: error.message,
+              timestamp: new Date()
+            }
+          });
+        } catch (logError) {
+          console.error('❌ Error logging WhatsApp error:', logError.message);
+        }
+        
+        return { success: false, error: error.message };
       }
     });
 
     const results = await Promise.all(promises);
     const successful = results.filter(r => r && r.success).length;
+    const failed = results.filter(r => r && !r.success).length;
     
-    console.log(`📱 WhatsApp notifications completed for order ${fullOrder.orderNumber}: ${successful}/${adminConfigs.length} successful`);
+    console.log(`📱 WhatsApp notifications completed for order ${fullOrder.orderNumber}:`);
+    console.log(`   ✅ Successful: ${successful}`);
+    console.log(`   ❌ Failed: ${failed}`);
+    console.log(`   📊 Total: ${adminConfigs.length}`);
     
   } catch (error) {
     console.error('❌ Error in WhatsApp notification system:', error);
+    console.error('Stack trace:', error.stack);
   }
 }
 
@@ -260,7 +274,7 @@ exports.createOrder = async (req, res) => {
     for (const cartItem of items) {
       console.log('📦 Processing cart item:', cartItem);
       
-      // Extract product ID - handle both object and string formats
+      // Extract product ID
       let productId;
       if (typeof cartItem.product === 'string') {
         productId = cartItem.product;
@@ -417,9 +431,6 @@ exports.createOrder = async (req, res) => {
     // Create notification for admin users
     await createOrderNotification(order, 'new_order');
     
-    // Send WhatsApp notification for new order - OUTSIDE TRANSACTION
-    console.log('📱 Sending WhatsApp notifications for new order...');
-    
     // Commit transaction first
     console.log('✅ Committing transaction...');
     await session.commitTransaction();
@@ -427,11 +438,13 @@ exports.createOrder = async (req, res) => {
     
     console.log('✅ Order created successfully:', orderNumber);
     
-    // Send WhatsApp notification after transaction is committed
+    // Send WhatsApp notification AFTER transaction is committed
     // This prevents WhatsApp from blocking the order creation if it fails
     setTimeout(async () => {
       try {
+        console.log('📱 Starting WhatsApp notification process...');
         await sendWhatsAppOrderNotification(order, 'new_order');
+        console.log('📱 WhatsApp notification process completed');
       } catch (whatsappError) {
         console.error('❌ WhatsApp notification failed (non-blocking):', whatsappError.message);
         // Don't throw error, just log it
@@ -622,7 +635,7 @@ exports.updateOrderStatus = async (req, res) => {
       order.deliveredBy = req.user.id;
       // Create notification for delivered order
       await createOrderNotification(order, 'delivered', note);
-      // Send WhatsApp notification - outside transaction
+      // Send WhatsApp notification
       setTimeout(async () => {
         try {
           await sendWhatsAppOrderNotification(order, 'delivered', note);
@@ -635,7 +648,7 @@ exports.updateOrderStatus = async (req, res) => {
       order.cancellationReason = note || 'Order cancelled by admin';
       // Create notification for cancelled order
       await createOrderNotification(order, 'cancelled', order.cancellationReason);
-      // Send WhatsApp notification - outside transaction
+      // Send WhatsApp notification
       setTimeout(async () => {
         try {
           await sendWhatsAppOrderNotification(order, 'cancelled', order.cancellationReason);
@@ -648,7 +661,7 @@ exports.updateOrderStatus = async (req, res) => {
     } else if (orderStatus === 'processing') {
       // Create notification for processing order
       await createOrderNotification(order, 'processing', note);
-      // Send WhatsApp notification - outside transaction
+      // Send WhatsApp notification
       setTimeout(async () => {
         try {
           await sendWhatsAppOrderNotification(order, 'processing', note);
@@ -657,7 +670,7 @@ exports.updateOrderStatus = async (req, res) => {
         }
       }, 1000);
     } else if (orderStatus === 'confirmed') {
-      // Send WhatsApp notification for confirmed order - outside transaction
+      // Send WhatsApp notification for confirmed order
       setTimeout(async () => {
         try {
           await sendWhatsAppOrderNotification(order, 'confirmed', note);
@@ -766,7 +779,7 @@ exports.cancelOrder = async (req, res) => {
     
     console.log(`❌ Order ${order.orderNumber} cancelled by user ${req.user.id}`);
     
-    // Send WhatsApp notification - outside transaction
+    // Send WhatsApp notification
     setTimeout(async () => {
       try {
         await sendWhatsAppOrderNotification(order, 'cancelled', order.cancellationReason);
@@ -852,7 +865,7 @@ exports.processOrder = async (req, res) => {
     
     console.log(`🔄 Order ${order.orderNumber} processed by admin ${req.user.id}`);
     
-    // Send WhatsApp notification - outside transaction
+    // Send WhatsApp notification
     setTimeout(async () => {
       try {
         await sendWhatsAppOrderNotification(order, 'processing');
@@ -939,7 +952,7 @@ exports.deliverOrder = async (req, res) => {
     
     console.log(`🚚 Order ${order.orderNumber} delivered by admin ${req.user.id}`);
     
-    // Send WhatsApp notification - outside transaction
+    // Send WhatsApp notification
     setTimeout(async () => {
       try {
         await sendWhatsAppOrderNotification(order, 'delivered');
@@ -1030,7 +1043,7 @@ exports.rejectOrder = async (req, res) => {
     
     console.log(`❌ Order ${order.orderNumber} rejected by admin ${req.user.id}`);
     
-    // Send WhatsApp notification - outside transaction
+    // Send WhatsApp notification
     setTimeout(async () => {
       try {
         await sendWhatsAppOrderNotification(order, 'cancelled', order.cancellationReason);
@@ -1133,7 +1146,7 @@ exports.confirmDelivery = async (req, res) => {
     
     console.log(`✅ Order ${order.orderNumber} delivery confirmed by user ${req.user.id}`);
     
-    // Send WhatsApp notification - outside transaction
+    // Send WhatsApp notification
     setTimeout(async () => {
       try {
         await sendWhatsAppOrderNotification(order, 'confirmed', confirmationNote);
@@ -1576,67 +1589,3 @@ function calculateTaxAmount(subtotal) {
   const taxRate = 0.18; // 18% VAT in Uganda
   return subtotal * taxRate;
 }
-
-// @desc    Debug WhatsApp notifications
-// @route   GET /api/orders/whatsapp/debug
-// @access  Private/Admin
-exports.debugWhatsApp = async (req, res) => {
-  try {
-    // Get all active WhatsApp configs
-    const activeConfigs = await WhatsAppConfig.find({ isActive: true })
-      .select('phoneNumber isActive notifications user lastTestAt lastTestStatus')
-      .populate('user', 'name email role')
-      .lean();
-    
-    // Get recent orders
-    const recentOrder = await Order.findOne().sort({ createdAt: -1 });
-    
-    // Get WhatsApp logs
-    const logs = await WhatsAppLog.find()
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .lean();
-    
-    res.json({
-      success: true,
-      debug: {
-        timestamp: new Date(),
-        activeWhatsAppConfigs: activeConfigs.length,
-        configs: activeConfigs.map(c => ({
-          phoneNumber: c.phoneNumber ? `${c.phoneNumber.substring(0, 4)}...${c.phoneNumber.substring(-4)}` : 'Not set',
-          isActive: c.isActive,
-          lastTestStatus: c.lastTestStatus,
-          lastTestAt: c.lastTestAt,
-          user: c.user ? `${c.user.name} (${c.user.email})` : 'Unknown',
-          notifications: c.notifications
-        })),
-        lastOrder: recentOrder ? {
-          orderNumber: recentOrder.orderNumber,
-          customer: recentOrder.customer?.name,
-          totalAmount: recentOrder.totalAmount,
-          createdAt: recentOrder.createdAt,
-          orderStatus: recentOrder.orderStatus
-        } : null,
-        recentLogs: logs.map(log => ({
-          type: log.type,
-          orderNumber: log.orderNumber,
-          phoneNumber: log.phoneNumber ? `${log.phoneNumber.substring(0, 4)}...${log.phoneNumber.substring(-4)}` : 'N/A',
-          success: log.success,
-          error: log.error,
-          createdAt: log.createdAt
-        })),
-        serverInfo: {
-          nodeVersion: process.version,
-          environment: process.env.NODE_ENV,
-          whatsappService: 'loaded'
-        }
-      }
-    });
-  } catch (error) {
-    console.error('❌ Debug WhatsApp error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-};
