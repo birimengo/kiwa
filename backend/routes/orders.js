@@ -11,12 +11,15 @@ const {
   processOrder,
   deliverOrder,
   rejectOrder,
-  confirmDelivery
+  confirmDelivery,
+  testWhatsAppOrder,
+  getWhatsAppConfigs
 } = require('../controllers/orders');
 const { protect, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Public routes
 router.route('/')
   .post(protect, createOrder)
   .get(protect, authorize('admin'), getAllOrders);
@@ -39,7 +42,7 @@ router.route('/:id/status')
 router.route('/:id/cancel')
   .put(protect, cancelOrder);
 
-// New routes for order workflow
+// Order workflow routes
 router.route('/:id/process')
   .put(protect, authorize('admin'), processOrder);
 
@@ -51,5 +54,12 @@ router.route('/:id/reject')
 
 router.route('/:id/confirm-delivery')
   .put(protect, confirmDelivery);
+
+// WhatsApp Debug Routes
+router.route('/test/whatsapp')
+  .post(protect, authorize('admin'), testWhatsAppOrder);
+
+router.route('/whatsapp/configs')
+  .get(protect, authorize('admin'), getWhatsAppConfigs);
 
 module.exports = router;

@@ -1,17 +1,20 @@
 const WhatsAppConfig = require('../models/WhatsAppConfig');
-const WhatsAppLog = require('../models/WhatsAppLog'); // Optional: For logging
+const WhatsAppLog = require('../models/WhatsAppLog');
 const whatsappService = require('../services/whatsappService');
 
-// @desc    Get WhatsApp configuration
+// @desc    Get WhatsApp configuration for current user
 // @route   GET /api/whatsapp/config
 // @access  Private/Admin
 exports.getConfig = async (req, res) => {
   try {
+    console.log('📱 Fetching WhatsApp config for user:', req.user.id);
+    
     const config = await WhatsAppConfig.findOne({ user: req.user.id })
-      .select('-apiKey') // Don't send API key to frontend for security
+      .select('-apiKey')
       .lean();
 
     if (!config) {
+      console.log('📱 No config found, returning default');
       return res.json({
         success: true,
         config: {
@@ -26,6 +29,12 @@ exports.getConfig = async (req, res) => {
         }
       });
     }
+
+    console.log('📱 Config found:', {
+      phone: config.phoneNumber ? 'Present' : 'Missing',
+      isActive: config.isActive,
+      notifications: config.notifications
+    });
 
     res.json({
       success: true,
@@ -48,22 +57,36 @@ exports.getConfig = async (req, res) => {
 exports.saveConfig = async (req, res) => {
   try {
     const { phoneNumber, apiKey, isActive, notifications } = req.body;
+    
+    console.log('\n📱 === SAVING WHATSAPP CONFIG ===');
+    console.log('User:', req.user.id);
+    console.log('Phone:', phoneNumber);
+    console.log('API Key present:', !!apiKey);
+    console.log('Is Active:', isActive);
+    console.log('Notifications:', notifications);
 
     // Validate phone number
-    if (phoneNumber && !whatsappService.validatePhoneNumber(phoneNumber)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid phone number format. Please include country code (e.g., +256 XXX XXX XXX)'
-      });
+    if (phoneNumber) {
+      const validation = whatsappService.validateAndFormatPhone(phoneNumber);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: validation.error
+        });
+      }
+      console.log('📱 Phone validation passed:', validation.formatted);
     }
 
     // Verify API key if provided
     if (apiKey && phoneNumber) {
+      console.log('🔐 Verifying API key...');
       const verification = await whatsappService.verifyApiKey(phoneNumber, apiKey);
+      console.log('🔐 Verification result:', verification.success ? 'SUCCESS' : 'FAILED');
+      
       if (!verification.success) {
         return res.status(400).json({
           success: false,
-          message: 'API key verification failed. Please check your API key and try again.',
+          message: 'API key verification failed',
           error: verification.message
         });
       }
@@ -71,7 +94,7 @@ exports.saveConfig = async (req, res) => {
 
     const configData = {
       user: req.user.id,
-      phoneNumber: phoneNumber ? whatsappService.formatPhoneForApi(phoneNumber) : undefined,
+      phoneNumber: phoneNumber || undefined,
       apiKey: apiKey || undefined,
       isActive: isActive || false,
       notifications: notifications || {
@@ -98,6 +121,7 @@ exports.saveConfig = async (req, res) => {
     delete responseConfig.apiKey;
 
     console.log(`✅ WhatsApp configuration saved for user ${req.user.id}`);
+    console.log('📱 === CONFIG SAVED ===\n');
 
     res.json({
       success: true,
@@ -120,17 +144,28 @@ exports.saveConfig = async (req, res) => {
 // @access  Private/Admin
 exports.testNotification = async (req, res) => {
   try {
-    const config = await WhatsAppConfig.findOne({ user: req.user.id });
+    console.log('\n🧪 === WHATSAPP TEST START ===');
+    
+    const config = await WhatsAppConfig.findOne({ user: req.user.id })
+      .select('+apiKey');
 
     if (!config || !config.isActive || !config.phoneNumber || !config.apiKey) {
+      console.log('❌ WhatsApp not configured or inactive');
       return res.status(400).json({
         success: false,
         message: 'WhatsApp is not configured or not active. Please configure it first.'
       });
     }
 
-    // Create test order data
+    console.log('🧪 Using config:', {
+      phone: config.phoneNumber,
+      apiKey: config.apiKey ? 'Present' : 'Missing',
+      isActive: config.isActive
+    });
+
+    // Create test order
     const testOrder = whatsappService.generateTestOrder();
+    console.log('🧪 Test order:', testOrder.orderNumber);
 
     // Send test notification
     const result = await whatsappService.sendOrderNotification(
@@ -148,18 +183,19 @@ exports.testNotification = async (req, res) => {
     config.lastTestStatus = result.success ? 'success' : 'failed';
     await config.save();
 
-    // Log the test (optional)
-    if (WhatsAppLog) {
-      await WhatsAppLog.create({
-        user: req.user.id,
-        type: 'test',
-        phoneNumber: config.phoneNumber,
-        orderNumber: testOrder.orderNumber,
-        success: result.success,
-        message: result.message,
-        data: result.data
-      });
-    }
+    // Log the test
+    await WhatsAppLog.create({
+      user: req.user.id,
+      type: 'test',
+      phoneNumber: config.phoneNumber,
+      orderNumber: testOrder.orderNumber,
+      success: result.success,
+      message: result.message,
+      response: result.data
+    });
+
+    console.log('🧪 Test result:', result.success ? 'SUCCESS' : 'FAILED');
+    console.log('🧪 === WHATSAPP TEST END ===\n');
 
     if (result.success) {
       res.json({
@@ -199,6 +235,8 @@ exports.deactivate = async (req, res) => {
         deactivatedAt: new Date()
       }
     );
+
+    console.log(`✅ WhatsApp deactivated for user ${req.user.id}`);
 
     res.json({
       success: true,
@@ -268,21 +306,19 @@ exports.getStats = async (req, res) => {
 
     let stats = {
       isActive: config.isActive,
-      phoneNumber: config.phoneNumber ? `${config.phoneNumber.substring(0, 4)}...${config.phoneNumber.substring(-4)}` : 'Not configured',
+      phoneNumber: config.phoneNumber ? `${config.phoneNumber.substring(0, 4)}...${config.phoneNumber.slice(-4)}` : 'Not configured',
       lastTest: config.lastTestAt,
       lastTestStatus: config.lastTestStatus
     };
 
-    // If using WhatsAppLog model, add more detailed stats
-    if (WhatsAppLog) {
-      const logs = await WhatsAppLog.find({ user: req.user.id });
-      const successfulLogs = logs.filter(log => log.success);
-      
-      stats.totalNotifications = logs.length;
-      stats.successfulNotifications = successfulLogs.length;
-      stats.successRate = logs.length > 0 ? Math.round((successfulLogs.length / logs.length) * 100) : 0;
-      stats.lastNotification = logs.length > 0 ? logs[logs.length - 1].createdAt : null;
-    }
+    // Get detailed stats from logs
+    const logs = await WhatsAppLog.find({ user: req.user.id });
+    const successfulLogs = logs.filter(log => log.success);
+    
+    stats.totalNotifications = logs.length;
+    stats.successfulNotifications = successfulLogs.length;
+    stats.successRate = logs.length > 0 ? Math.round((successfulLogs.length / logs.length) * 100) : 0;
+    stats.lastNotification = logs.length > 0 ? logs[0].createdAt : null;
 
     res.json({
       success: true,
@@ -304,14 +340,6 @@ exports.getStats = async (req, res) => {
 // @access  Private/Admin
 exports.getNotificationLogs = async (req, res) => {
   try {
-    if (!WhatsAppLog) {
-      return res.json({
-        success: true,
-        message: 'Logging not enabled',
-        logs: []
-      });
-    }
-
     const { page = 1, limit = 20 } = req.query;
     const skip = (page - 1) * limit;
 
@@ -340,6 +368,52 @@ exports.getNotificationLogs = async (req, res) => {
       success: false,
       message: 'Server error while fetching notification logs',
       error: error.message
+    });
+  }
+};
+
+// @desc    Manual WhatsApp test endpoint (for debugging)
+// @route   POST /api/whatsapp/manual-test
+// @access  Private/Admin
+exports.manualTest = async (req, res) => {
+  try {
+    const { phoneNumber, apiKey, message } = req.body;
+    
+    if (!phoneNumber || !apiKey) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number and API key are required'
+      });
+    }
+
+    console.log('🧪 Manual WhatsApp test:', { phoneNumber, apiKey });
+
+    const testMessage = message || '✅ Manual WhatsApp API Test!\n\nThis is a manual test from ElectroShop Admin.\n\nTime: ' + new Date().toLocaleString();
+    
+    const encodedMessage = encodeURIComponent(testMessage);
+    const formattedPhone = whatsappService.formatPhoneForApi(phoneNumber);
+    
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${formattedPhone}&text=${encodedMessage}&apikey=${apiKey}`;
+    
+    console.log('🧪 URL (first 100 chars):', url.substring(0, 100) + '...');
+
+    const axios = require('axios');
+    const response = await axios.get(url, { timeout: 10000 });
+
+    console.log('🧪 Response:', response.data);
+
+    res.json({
+      success: true,
+      message: 'Manual test completed',
+      data: response.data
+    });
+
+  } catch (error) {
+    console.error('❌ Manual test error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+      error: error.code
     });
   }
 };
