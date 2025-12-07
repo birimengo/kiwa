@@ -2,6 +2,41 @@ const Product = require('../models/Product');
 const Sale = require('../models/Sale');
 const mongoose = require('mongoose');
 
+// Helper function to add user filter to query
+const addUserFilterToQuery = (req, query, fieldName = 'soldBy') => {
+  // If createdBy/soldBy is in query (added by filterByUser middleware), use it
+  if (req.query[fieldName]) {
+    query[fieldName] = req.query[fieldName];
+    console.log(`🔍 Filtering by ${fieldName}: ${req.query[fieldName]}`);
+  }
+  return query;
+};
+
+// Helper function to add date range filter
+const addDateRangeFilter = (period, query) => {
+  let startDate, endDate = new Date();
+  
+  switch (period) {
+    case 'today':
+      startDate = new Date().setHours(0, 0, 0, 0);
+      break;
+    case 'week':
+      startDate = new Date().setDate(new Date().getDate() - 7);
+      break;
+    case 'month':
+      startDate = new Date().setMonth(new Date().getMonth() - 1);
+      break;
+    case 'year':
+      startDate = new Date().setFullYear(new Date().getFullYear() - 1);
+      break;
+    default:
+      startDate = new Date().setHours(0, 0, 0, 0);
+  }
+  
+  query.createdAt = { $gte: new Date(startDate), $lte: endDate };
+  return query;
+};
+
 // @desc    Get sales overview analytics
 // @route   GET /api/analytics/sales/overview
 // @access  Private/Admin
@@ -10,33 +45,29 @@ exports.getSalesOverview = async (req, res) => {
     const { period = 'week' } = req.query;
     
     console.log(`📊 Fetching sales overview for period: ${period}`);
+    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
 
-    let startDate, endDate = new Date();
+    // Build base query
+    let baseQuery = {
+      status: 'completed'
+    };
     
-    switch (period) {
-      case 'today':
-        startDate = new Date().setHours(0, 0, 0, 0);
-        break;
-      case 'week':
-        startDate = new Date().setDate(new Date().getDate() - 7);
-        break;
-      case 'month':
-        startDate = new Date().setMonth(new Date().getMonth() - 1);
-        break;
-      case 'year':
-        startDate = new Date().setFullYear(new Date().getFullYear() - 1);
-        break;
-      default:
-        startDate = new Date().setHours(0, 0, 0, 0);
-    }
+    // Add date range filter
+    baseQuery = addDateRangeFilter(period, baseQuery);
+    
+    // Add user filter if present
+    baseQuery = addUserFilterToQuery(req, baseQuery, 'soldBy');
+
+    console.log(`🔍 Sales Overview Query:`, { 
+      period,
+      soldBy: req.query.soldBy,
+      dateRange: baseQuery.createdAt 
+    });
 
     // Sales statistics
     const salesStats = await Sale.aggregate([
       {
-        $match: {
-          createdAt: { $gte: new Date(startDate), $lte: endDate },
-          status: 'completed'
-        }
+        $match: baseQuery
       },
       {
         $group: {
@@ -53,10 +84,7 @@ exports.getSalesOverview = async (req, res) => {
     // Daily sales trend for the period
     const dailySales = await Sale.aggregate([
       {
-        $match: {
-          createdAt: { $gte: new Date(startDate), $lte: endDate },
-          status: 'completed'
-        }
+        $match: baseQuery
       },
       {
         $group: {
@@ -74,10 +102,7 @@ exports.getSalesOverview = async (req, res) => {
     // Payment method breakdown
     const paymentMethods = await Sale.aggregate([
       {
-        $match: {
-          createdAt: { $gte: new Date(startDate), $lte: endDate },
-          status: 'completed'
-        }
+        $match: baseQuery
       },
       {
         $group: {
@@ -96,7 +121,7 @@ exports.getSalesOverview = async (req, res) => {
       averageSale: 0
     };
 
-    console.log(`✅ Sales overview fetched for ${period}`);
+    console.log(`✅ Sales overview fetched for ${period} - ${result.totalSales} sales`);
 
     res.json({
       success: true,
@@ -126,20 +151,69 @@ exports.getProductAnalytics = async (req, res) => {
     const { period = 'all' } = req.query;
 
     console.log(`📈 Fetching product analytics for period: ${period}`);
+    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
 
-    // Get enhanced product statistics
-    const productStats = await Product.getEnhancedProductStats();
+    // Build base query for products
+    let productQuery = { isActive: true };
+    
+    // Add user filter if present (for product analytics, filter by createdBy)
+    productQuery = addUserFilterToQuery(req, productQuery, 'createdBy');
 
-    // Get top selling products
-    const topProducts = await Product.find({ isActive: true })
-      .select('name brand sellingPrice purchasePrice stock totalSold category')
+    console.log(`🔍 Product Analytics Query:`, { 
+      period,
+      createdBy: req.query.createdBy
+    });
+
+    // Get product statistics with user filter
+    const productStats = await Product.aggregate([
+      { $match: productQuery },
+      {
+        $group: {
+          _id: null,
+          totalProducts: { $sum: 1 },
+          totalValue: { $sum: { $multiply: ['$purchasePrice', '$stock'] } },
+          totalRevenue: { $sum: { $multiply: ['$sellingPrice', '$totalSold'] } },
+          totalCost: { $sum: { $multiply: ['$purchasePrice', '$totalSold'] } },
+          totalProfit: { 
+            $sum: { 
+              $multiply: [
+                { $subtract: ['$sellingPrice', '$purchasePrice'] }, 
+                '$totalSold'
+              ] 
+            } 
+          },
+          outOfStock: {
+            $sum: { $cond: [{ $eq: ['$stock', 0] }, 1, 0] }
+          },
+          lowStock: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: ['$stock', 0] },
+                    { $lte: ['$stock', '$lowStockAlert'] }
+                  ]
+                },
+                1,
+                0
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    // Get top selling products with user filter
+    const topProducts = await Product.find(productQuery)
+      .select('name brand sellingPrice purchasePrice stock totalSold category createdBy')
+      .populate('createdBy', 'name email')
       .sort({ totalSold: -1 })
       .limit(10)
       .lean();
 
-    // Category performance
+    // Category performance with user filter
     const categoryPerformance = await Product.aggregate([
-      { $match: { isActive: true } },
+      { $match: productQuery },
       {
         $group: {
           _id: '$category',
@@ -153,28 +227,38 @@ exports.getProductAnalytics = async (req, res) => {
       { $sort: { totalRevenue: -1 } }
     ]);
 
-    // Stock analysis
+    // Stock analysis with user filter
     const stockAnalysis = {
       healthy: await Product.countDocuments({ 
-        isActive: true, 
+        ...productQuery,
         stock: { $gt: 10 } 
       }),
       lowStock: await Product.countDocuments({ 
-        isActive: true, 
+        ...productQuery,
         stock: { $gt: 0, $lte: 10 } 
       }),
       outOfStock: await Product.countDocuments({ 
-        isActive: true, 
+        ...productQuery,
         stock: 0 
       })
     };
 
-    console.log(`✅ Product analytics fetched`);
+    const stats = productStats[0] || {
+      totalProducts: 0,
+      totalValue: 0,
+      totalRevenue: 0,
+      totalCost: 0,
+      totalProfit: 0,
+      outOfStock: 0,
+      lowStock: 0
+    };
+
+    console.log(`✅ Product analytics fetched - ${stats.totalProducts} products`);
 
     res.json({
       success: true,
       period,
-      stats: productStats,
+      stats,
       topProducts,
       categories: categoryPerformance,
       stockAnalysis
@@ -196,9 +280,20 @@ exports.getProductAnalytics = async (req, res) => {
 exports.getInventoryAnalytics = async (req, res) => {
   try {
     console.log('📦 Fetching inventory analytics...');
+    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
+
+    // Build base query
+    let productQuery = { isActive: true };
+    
+    // Add user filter if present
+    productQuery = addUserFilterToQuery(req, productQuery, 'createdBy');
+
+    console.log(`🔍 Inventory Query:`, { 
+      createdBy: req.query.createdBy
+    });
 
     const inventoryStats = await Product.aggregate([
-      { $match: { isActive: true } },
+      { $match: productQuery },
       {
         $group: {
           _id: null,
@@ -212,19 +307,20 @@ exports.getInventoryAnalytics = async (req, res) => {
       }
     ]);
 
-    // Low stock products
+    // Low stock products with user filter
     const lowStockProducts = await Product.find({
-      isActive: true,
+      ...productQuery,
       $expr: { $lte: ['$stock', '$lowStockAlert'] }
     })
-    .select('name brand stock lowStockAlert purchasePrice sellingPrice')
+    .select('name brand stock lowStockAlert purchasePrice sellingPrice createdBy')
+    .populate('createdBy', 'name email')
     .sort({ stock: 1 })
     .limit(20)
     .lean();
 
-    // Stock movement trends
+    // Stock movement trends with user filter
     const stockMovement = await Product.aggregate([
-      { $match: { isActive: true } },
+      { $match: productQuery },
       { $unwind: '$stockHistory' },
       {
         $match: {
@@ -262,7 +358,7 @@ exports.getInventoryAnalytics = async (req, res) => {
       totalItems: 0
     };
 
-    console.log(`✅ Inventory analytics fetched`);
+    console.log(`✅ Inventory analytics fetched - ${stats.totalProducts} products`);
 
     res.json({
       success: true,
@@ -271,7 +367,7 @@ exports.getInventoryAnalytics = async (req, res) => {
       stockMovement,
       alerts: {
         lowStockCount: lowStockProducts.length,
-        outOfStockCount: await Product.countDocuments({ isActive: true, stock: 0 })
+        outOfStockCount: await Product.countDocuments({ ...productQuery, stock: 0 })
       }
     });
 
@@ -293,33 +389,29 @@ exports.getPerformanceMetrics = async (req, res) => {
     const { period = 'week' } = req.query;
 
     console.log(`🚀 Fetching performance metrics for period: ${period}`);
+    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
 
-    let startDate, endDate = new Date();
+    // Build base query for sales
+    let salesQuery = {
+      status: 'completed'
+    };
     
-    switch (period) {
-      case 'today':
-        startDate = new Date().setHours(0, 0, 0, 0);
-        break;
-      case 'week':
-        startDate = new Date().setDate(new Date().getDate() - 7);
-        break;
-      case 'month':
-        startDate = new Date().setMonth(new Date().getMonth() - 1);
-        break;
-      case 'year':
-        startDate = new Date().setFullYear(new Date().getFullYear() - 1);
-        break;
-      default:
-        startDate = new Date().setHours(0, 0, 0, 0);
-    }
+    // Add date range filter
+    salesQuery = addDateRangeFilter(period, salesQuery);
+    
+    // Add user filter if present
+    salesQuery = addUserFilterToQuery(req, salesQuery, 'soldBy');
 
-    // Sales performance
+    console.log(`🔍 Performance Query:`, { 
+      period,
+      soldBy: req.query.soldBy,
+      dateRange: salesQuery.createdAt 
+    });
+
+    // Sales performance with user filter
     const salesPerformance = await Sale.aggregate([
       {
-        $match: {
-          createdAt: { $gte: new Date(startDate), $lte: endDate },
-          status: 'completed'
-        }
+        $match: salesQuery
       },
       {
         $group: {
@@ -333,9 +425,13 @@ exports.getPerformanceMetrics = async (req, res) => {
       }
     ]);
 
-    // Product performance
+    // Build base query for products
+    let productQuery = { isActive: true };
+    productQuery = addUserFilterToQuery(req, productQuery, 'createdBy');
+
+    // Product performance with user filter
     const productPerformance = await Product.aggregate([
-      { $match: { isActive: true } },
+      { $match: productQuery },
       {
         $group: {
           _id: null,
@@ -362,9 +458,9 @@ exports.getPerformanceMetrics = async (req, res) => {
       }
     ]);
 
-    // Inventory performance
+    // Inventory performance with user filter
     const inventoryPerformance = await Product.aggregate([
-      { $match: { isActive: true } },
+      { $match: productQuery },
       {
         $group: {
           _id: null,
@@ -409,7 +505,7 @@ exports.getPerformanceMetrics = async (req, res) => {
       stockoutRate: 0
     };
 
-    console.log(`✅ Performance metrics fetched`);
+    console.log(`✅ Performance metrics fetched - ${salesData.totalSales} sales`);
 
     res.json({
       success: true,
@@ -444,14 +540,31 @@ exports.getDailyPerformance = async (req, res) => {
     nextDay.setDate(nextDay.getDate() + 1);
 
     console.log(`📅 Fetching daily performance for: ${targetDate.toDateString()}`);
+    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
 
-    // Daily sales
+    // Build base query
+    let salesQuery = {
+      createdAt: { $gte: targetDate, $lt: nextDay },
+      status: 'completed'
+    };
+    
+    // Add user filter if present
+    salesQuery = addUserFilterToQuery(req, salesQuery, 'soldBy');
+
+    // Build product query
+    let productQuery = { isActive: true };
+    productQuery = addUserFilterToQuery(req, productQuery, 'createdBy');
+
+    console.log(`🔍 Daily Performance Query:`, { 
+      date: targetDate.toISOString().split('T')[0],
+      soldBy: req.query.soldBy,
+      createdBy: req.query.createdBy
+    });
+
+    // Daily sales with user filter
     const dailySales = await Sale.aggregate([
       {
-        $match: {
-          createdAt: { $gte: targetDate, $lt: nextDay },
-          status: 'completed'
-        }
+        $match: salesQuery
       },
       {
         $group: {
@@ -465,19 +578,29 @@ exports.getDailyPerformance = async (req, res) => {
       }
     ]);
 
-    // Products sold today
+    // Products sold today with user filter
     const productsSoldToday = await Sale.aggregate([
       {
-        $match: {
-          createdAt: { $gte: targetDate, $lt: nextDay },
-          status: 'completed'
-        }
+        $match: salesQuery
       },
       { $unwind: '$items' },
+      {
+        $lookup: {
+          from: 'products',
+          localField: 'items.product',
+          foreignField: '_id',
+          as: 'productDetails'
+        }
+      },
+      { $unwind: '$productDetails' },
+      {
+        $match: productQuery
+      },
       {
         $group: {
           _id: '$items.product',
           productName: { $first: '$items.productName' },
+          brand: { $first: '$productDetails.brand' },
           quantitySold: { $sum: '$items.quantity' },
           revenue: { $sum: '$items.totalPrice' },
           profit: { $sum: '$items.profit' }
@@ -487,8 +610,9 @@ exports.getDailyPerformance = async (req, res) => {
       { $limit: 10 }
     ]);
 
-    // Inventory changes today
+    // Inventory changes today with user filter
     const inventoryChanges = await Product.aggregate([
+      { $match: productQuery },
       { $unwind: '$stockHistory' },
       {
         $match: {
@@ -519,7 +643,7 @@ exports.getDailyPerformance = async (req, res) => {
       averageSaleValue: 0
     };
 
-    console.log(`✅ Daily performance fetched for ${targetDate.toDateString()}`);
+    console.log(`✅ Daily performance fetched for ${targetDate.toDateString()} - ${dailyData.totalSales} sales`);
 
     res.json({
       success: true,
@@ -552,9 +676,22 @@ exports.getProductTracking = async (req, res) => {
     const { limit = 10 } = req.query;
 
     console.log(`👀 Fetching product tracking data, limit: ${limit}`);
+    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
 
-    const products = await Product.find({ isActive: true })
-      .select('name brand sellingPrice purchasePrice stock totalSold originalQuantity restockedQuantity lowStockAlert stockHistory createdAt category')
+    // Build base query
+    let productQuery = { isActive: true };
+    
+    // Add user filter if present
+    productQuery = addUserFilterToQuery(req, productQuery, 'createdBy');
+
+    console.log(`🔍 Product Tracking Query:`, { 
+      limit,
+      createdBy: req.query.createdBy
+    });
+
+    const products = await Product.find(productQuery)
+      .select('name brand sellingPrice purchasePrice stock totalSold originalQuantity restockedQuantity lowStockAlert stockHistory createdAt category createdBy')
+      .populate('createdBy', 'name email')
       .sort({ totalSold: -1 })
       .limit(parseInt(limit))
       .lean();
@@ -576,6 +713,7 @@ exports.getProductTracking = async (req, res) => {
         name: product.name,
         brand: product.brand,
         category: product.category,
+        creator: product.createdBy,
         pricing: {
           cost: product.purchasePrice,
           price: product.sellingPrice,
@@ -607,7 +745,7 @@ exports.getProductTracking = async (req, res) => {
         },
         performance: {
           rating: calculateProductPerformance(totalProfit, profitMargin, sellThroughRate),
-          trend: 'stable' // This could be calculated based on historical data
+          trend: 'stable'
         },
         timeline: {
           created: product.createdAt,
@@ -640,11 +778,272 @@ exports.getProductTracking = async (req, res) => {
   }
 };
 
-// Helper functions
+// ADMIN-SPECIFIC VERSIONS (for personal view)
+
+// @desc    Get admin's personal sales overview analytics
+// @route   GET /api/analytics/admin/sales-overview
+// @access  Private/Admin
+exports.getAdminSalesOverview = async (req, res) => {
+  try {
+    const { period = 'week' } = req.query;
+    
+    console.log(`📊 [ADMIN PERSONAL] Fetching sales overview for period: ${period}`);
+    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
+
+    // Build base query - always filter by current admin
+    let baseQuery = {
+      status: 'completed',
+      soldBy: req.user._id // Always filter by current admin
+    };
+    
+    // Add date range filter
+    baseQuery = addDateRangeFilter(period, baseQuery);
+
+    console.log(`🔍 [ADMIN PERSONAL] Sales Overview Query:`, { 
+      period,
+      soldBy: req.user._id,
+      dateRange: baseQuery.createdAt 
+    });
+
+    // Sales statistics
+    const salesStats = await Sale.aggregate([
+      {
+        $match: baseQuery
+      },
+      {
+        $group: {
+          _id: null,
+          totalSales: { $sum: 1 },
+          totalRevenue: { $sum: '$totalAmount' },
+          totalProfit: { $sum: '$totalProfit' },
+          totalItemsSold: { $sum: { $sum: '$items.quantity' } },
+          averageSale: { $avg: '$totalAmount' }
+        }
+      }
+    ]);
+
+    const result = salesStats[0] || {
+      totalSales: 0,
+      totalRevenue: 0,
+      totalProfit: 0,
+      totalItemsSold: 0,
+      averageSale: 0
+    };
+
+    console.log(`✅ [ADMIN PERSONAL] Sales overview fetched for ${period} - ${result.totalSales} sales`);
+
+    res.json({
+      success: true,
+      period,
+      overview: result,
+      isPersonalView: true,
+      adminId: req.user._id
+    });
+
+  } catch (error) {
+    console.error('❌ [ADMIN PERSONAL] Get sales overview error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching admin sales overview',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get admin's personal product analytics
+// @route   GET /api/analytics/admin/product-analytics
+// @access  Private/Admin
+exports.getAdminProductAnalytics = async (req, res) => {
+  try {
+    console.log(`📈 [ADMIN PERSONAL] Fetching product analytics`);
+    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
+
+    // Build base query - always filter by current admin
+    let productQuery = { 
+      isActive: true,
+      createdBy: req.user._id // Always filter by current admin
+    };
+
+    console.log(`🔍 [ADMIN PERSONAL] Product Analytics Query:`, { 
+      createdBy: req.user._id
+    });
+
+    // Get product statistics
+    const productStats = await Product.aggregate([
+      { $match: productQuery },
+      {
+        $group: {
+          _id: null,
+          totalProducts: { $sum: 1 },
+          totalValue: { $sum: { $multiply: ['$purchasePrice', '$stock'] } },
+          totalRevenue: { $sum: { $multiply: ['$sellingPrice', '$totalSold'] } },
+          totalCost: { $sum: { $multiply: ['$purchasePrice', '$totalSold'] } },
+          totalProfit: { 
+            $sum: { 
+              $multiply: [
+                { $subtract: ['$sellingPrice', '$purchasePrice'] }, 
+                '$totalSold'
+              ] 
+            } 
+          },
+          outOfStock: {
+            $sum: { $cond: [{ $eq: ['$stock', 0] }, 1, 0] }
+          },
+          lowStock: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: ['$stock', 0] },
+                    { $lte: ['$stock', '$lowStockAlert'] }
+                  ]
+                },
+                1,
+                0
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    const stats = productStats[0] || {
+      totalProducts: 0,
+      totalValue: 0,
+      totalRevenue: 0,
+      totalCost: 0,
+      totalProfit: 0,
+      outOfStock: 0,
+      lowStock: 0
+    };
+
+    console.log(`✅ [ADMIN PERSONAL] Product analytics fetched - ${stats.totalProducts} products`);
+
+    res.json({
+      success: true,
+      stats,
+      isPersonalView: true,
+      adminId: req.user._id
+    });
+
+  } catch (error) {
+    console.error('❌ [ADMIN PERSONAL] Get product analytics error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching admin product analytics',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get admin's personal performance metrics
+// @route   GET /api/analytics/admin/performance
+// @access  Private/Admin
+exports.getAdminPerformance = async (req, res) => {
+  try {
+    const { period = 'week' } = req.query;
+
+    console.log(`🚀 [ADMIN PERSONAL] Fetching performance metrics for period: ${period}`);
+    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
+
+    // Build base query for sales - always filter by current admin
+    let salesQuery = {
+      status: 'completed',
+      soldBy: req.user._id // Always filter by current admin
+    };
+    
+    // Add date range filter
+    salesQuery = addDateRangeFilter(period, salesQuery);
+
+    console.log(`🔍 [ADMIN PERSONAL] Performance Query:`, { 
+      period,
+      soldBy: req.user._id,
+      dateRange: salesQuery.createdAt 
+    });
+
+    // Sales performance
+    const salesPerformance = await Sale.aggregate([
+      {
+        $match: salesQuery
+      },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: '$totalAmount' },
+          totalProfit: { $sum: '$totalProfit' },
+          totalSales: { $sum: 1 },
+          averageSaleValue: { $avg: '$totalAmount' },
+          averageProfitPerSale: { $avg: '$totalProfit' }
+        }
+      }
+    ]);
+
+    // Build base query for products - always filter by current admin
+    let productQuery = { 
+      isActive: true,
+      createdBy: req.user._id // Always filter by current admin
+    };
+
+    // Product performance
+    const productPerformance = await Product.aggregate([
+      { $match: productQuery },
+      {
+        $group: {
+          _id: null,
+          averageProfitMargin: {
+            $avg: {
+              $cond: [
+                { $gt: ['$sellingPrice', 0] },
+                { $multiply: [{ $divide: [{ $subtract: ['$sellingPrice', '$purchasePrice'] }, '$sellingPrice'] }, 100] },
+                0
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    const salesData = salesPerformance[0] || {
+      totalRevenue: 0,
+      totalProfit: 0,
+      totalSales: 0,
+      averageSaleValue: 0,
+      averageProfitPerSale: 0
+    };
+
+    const productData = productPerformance[0] || {
+      averageProfitMargin: 0
+    };
+
+    console.log(`✅ [ADMIN PERSONAL] Performance metrics fetched - ${salesData.totalSales} sales`);
+
+    res.json({
+      success: true,
+      period,
+      metrics: {
+        sales: salesData,
+        products: productData,
+        overallScore: calculateOverallScore(salesData, productData, { stockoutRate: 0 })
+      },
+      isPersonalView: true,
+      adminId: req.user._id
+    });
+
+  } catch (error) {
+    console.error('❌ [ADMIN PERSONAL] Get performance metrics error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching admin performance metrics',
+      error: error.message
+    });
+  }
+};
+
+// Helper functions (unchanged)
 function calculateOverallScore(sales, products, inventory) {
   const salesScore = sales.totalRevenue > 1000 ? 100 : (sales.totalRevenue / 1000) * 100;
-  const profitScore = products.averageProfitMargin;
-  const inventoryScore = (1 - inventory.stockoutRate) * 100;
+  const profitScore = products.averageProfitMargin || 0;
+  const inventoryScore = (1 - (inventory.stockoutRate || 0)) * 100;
   
   return Math.round((salesScore + profitScore + inventoryScore) / 3);
 }
