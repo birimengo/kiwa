@@ -5,21 +5,15 @@ class WhatsAppService {
   constructor() {
     this.baseURL = 'https://api.callmebot.com/whatsapp.php';
     this.maxRetries = 3;
-    this.retryDelay = 2000;
+    this.retryDelay = 2000; // 2 seconds
   }
 
   async sendOrderNotification(whatsappConfig, order, notificationType = 'new_order', note = '') {
     try {
-      console.log('\n📱 === WHATSAPP SERVICE START ===');
-      console.log('Config received:', {
-        phoneNumber: whatsappConfig.phoneNumber ? 'Present' : 'Missing',
-        apiKey: whatsappConfig.apiKey ? 'Present' : 'Missing'
-      });
-      
       const { phoneNumber, apiKey } = whatsappConfig;
       
       if (!phoneNumber || !apiKey) {
-        console.log('❌ WhatsApp notification skipped: Missing phone or API key');
+        console.log('❌ WhatsApp notification skipped: Phone number or API key not configured');
         return { 
           success: false, 
           message: 'WhatsApp configuration missing',
@@ -27,33 +21,30 @@ class WhatsAppService {
         };
       }
 
-      // Validate and format phone number
-      const validatedPhone = this.validateAndFormatPhone(phoneNumber);
-      if (!validatedPhone.valid) {
-        console.error('❌ Invalid phone number:', validatedPhone.error);
+      // Validate phone number
+      if (!this.validatePhoneNumber(phoneNumber)) {
+        console.error('❌ Invalid phone number format:', phoneNumber);
         return { 
           success: false, 
-          message: validatedPhone.error,
+          message: 'Invalid phone number format',
           type: notificationType 
         };
       }
 
-      // Format message
+      // Format message with order details based on notification type
       const message = this.formatOrderMessage(order, notificationType, note);
-      console.log('📱 Message length:', message.length, 'characters');
       
+      // Encode message for URL (max 4096 characters for WhatsApp)
       if (message.length > 4096) {
         console.warn('⚠️ WhatsApp message too long, truncating...');
         const truncatedMessage = message.substring(0, 4000) + '\n\n[Message truncated due to length]';
-        return await this.sendMessage(validatedPhone.formatted, apiKey, truncatedMessage, notificationType, order.orderNumber);
+        return await this.sendMessage(phoneNumber, apiKey, truncatedMessage, notificationType, order.orderNumber);
       }
       
-      const result = await this.sendMessage(validatedPhone.formatted, apiKey, message, notificationType, order.orderNumber);
-      console.log('📱 === WHATSAPP SERVICE END ===\n');
-      return result;
+      return await this.sendMessage(phoneNumber, apiKey, message, notificationType, order.orderNumber);
       
     } catch (error) {
-      console.error('❌ WhatsApp service error:', error.message);
+      console.error('❌ WhatsApp notification error:', error.message);
       return {
         success: false,
         message: error.message,
@@ -67,28 +58,21 @@ class WhatsAppService {
       // Encode message for URL
       const encodedMessage = encodeURIComponent(message);
       
-      // Build URL - VERY IMPORTANT: CallMeBot expects phone WITHOUT + sign
-      const url = `${this.baseURL}?phone=${phoneNumber}&text=${encodedMessage}&apikey=${apiKey}`;
+      // Build URL
+      const url = `${this.baseURL}?phone=${this.formatPhoneForApi(phoneNumber)}&text=${encodedMessage}&apikey=${apiKey}`;
       
-      console.log('📱 Making API call to CallMeBot:');
-      console.log('   Phone:', phoneNumber);
-      console.log('   API Key length:', apiKey.length);
-      console.log('   Notification Type:', notificationType);
-      console.log('   Order:', orderNumber);
-      console.log('   URL (first 100 chars):', url.substring(0, 100) + '...');
+      console.log(`📱 Sending WhatsApp ${notificationType} notification for order ${orderNumber} to ${phoneNumber}`);
       
-      // Send request
+      // Send request with timeout
       const response = await axios.get(url, { 
         timeout: 10000,
         headers: {
-          'User-Agent': 'ElectroShop-Backend/1.0',
-          'Accept': 'application/json'
+          'User-Agent': 'ElectroShop-Backend/1.0'
         }
       });
       
-      console.log('✅ WhatsApp API Response:');
-      console.log('   Status:', response.status);
-      console.log('   Data:', response.data);
+      console.log(`✅ WhatsApp ${notificationType} notification sent to ${phoneNumber} for order ${orderNumber}`);
+      console.log('📊 Response:', response.data);
       
       return {
         success: true,
@@ -99,17 +83,8 @@ class WhatsAppService {
       };
       
     } catch (error) {
-      console.error('❌ WhatsApp API Error Details:');
-      console.error('   Code:', error.code);
-      console.error('   Message:', error.message);
-      
-      if (error.response) {
-        console.error('   Response Status:', error.response.status);
-        console.error('   Response Data:', error.response.data);
-      }
-      
       if (error.code === 'ECONNABORTED' && retryCount < this.maxRetries) {
-        console.log(`🔄 Retry ${retryCount + 1}/${this.maxRetries}`);
+        console.log(`🔄 Retry ${retryCount + 1}/${this.maxRetries} for WhatsApp notification`);
         await this.delay(this.retryDelay * (retryCount + 1));
         return this.sendMessage(phoneNumber, apiKey, message, notificationType, orderNumber, retryCount + 1);
       }
@@ -118,75 +93,10 @@ class WhatsAppService {
     }
   }
 
-  validateAndFormatPhone(phoneNumber) {
-    console.log('📱 Validating phone:', phoneNumber);
-    
-    if (!phoneNumber || typeof phoneNumber !== 'string') {
-      return { valid: false, error: 'Phone number is required' };
-    }
-    
-    // Remove all non-digit characters
-    let cleaned = phoneNumber.replace(/\D/g, '');
-    console.log('📱 After cleaning:', cleaned);
-    
-    if (cleaned.length < 9 || cleaned.length > 15) {
-      return { 
-        valid: false, 
-        error: `Invalid phone length: ${cleaned.length} digits. Expected 9-15 digits.` 
-      };
-    }
-    
-    // FOR UGANDA NUMBERS (Most common case)
-    // If it starts with 256 and has 12 digits (256 + 9 digits)
-    if (cleaned.startsWith('256') && cleaned.length === 12) {
-      console.log('📱 Detected Uganda number with 256 prefix');
-      return { 
-        valid: true, 
-        formatted: cleaned, // CallMeBot expects WITHOUT + sign
-        original: phoneNumber 
-      };
-    }
-    
-    // If it's 9 digits (local Uganda number)
-    if (cleaned.length === 9 && !cleaned.startsWith('0')) {
-      console.log('📱 Detected local Uganda number (9 digits)');
-      return { 
-        valid: true, 
-        formatted: '256' + cleaned, // Add Uganda code
-        original: phoneNumber 
-      };
-    }
-    
-    // If it starts with 0 (local number)
-    if (cleaned.startsWith('0') && cleaned.length === 10) {
-      console.log('📱 Detected local number starting with 0');
-      const withoutZero = cleaned.substring(1);
-      return { 
-        valid: true, 
-        formatted: '256' + withoutZero, // Remove 0, add 256
-        original: phoneNumber 
-      };
-    }
-    
-    // For other international numbers
-    console.log('📱 Using as international number');
-    return { 
-      valid: true, 
-      formatted: cleaned, // Use cleaned number
-      original: phoneNumber 
-    };
-  }
-
-  formatPhoneForApi(phoneNumber) {
-    const validation = this.validateAndFormatPhone(phoneNumber);
-    return validation.valid ? validation.formatted : phoneNumber;
-  }
-
   formatOrderMessage(order, notificationType, note = '') {
-    // Format items list
-    const itemsList = order.items && order.items.length > 0 ? order.items.map((item, index) => 
-      `${index + 1}. ${item.productName || 'Product'} (${item.productBrand || 'No brand'})\n   Qty: ${item.quantity || 0} × UGX ${this.formatCurrency(item.unitPrice || 0)}\n   Total: UGX ${this.formatCurrency(item.totalPrice || 0)}`
-    ).join('\n\n') : 'No items';
+    const itemsList = order.items.map((item, index) => 
+      `${index + 1}. ${item.productName} (${item.productBrand || 'No brand'})\n   Qty: ${item.quantity} × UGX ${item.unitPrice?.toLocaleString?.() || '0'}\n   Total: UGX ${item.totalPrice?.toLocaleString?.() || '0'}`
+    ).join('\n\n');
 
     let statusEmoji = '📦';
     let statusMessage = '';
@@ -201,10 +111,10 @@ class WhatsAppService {
 ${itemsList}
 
 *💵 Order Summary:*
-Subtotal: UGX ${this.formatCurrency(order.subtotal || 0)}
-Shipping: UGX ${this.formatCurrency(order.shippingFee || 0)}
-Tax: UGX ${this.formatCurrency(order.taxAmount || 0)}
-*Total: UGX ${this.formatCurrency(order.totalAmount || 0)}*
+Subtotal: UGX ${order.subtotal?.toLocaleString?.() || '0'}
+Shipping: UGX ${order.shippingFee?.toLocaleString?.() || '0'}
+Tax: UGX ${order.taxAmount?.toLocaleString?.() || '0'}
+*Total: UGX ${order.totalAmount?.toLocaleString?.() || '0'}*
 
 *💰 Payment:*
 Method: ${order.paymentMethod || 'onDelivery'}
@@ -254,7 +164,7 @@ Status: ${order.paymentStatus || 'pending'}`;
       message += additionalInfo;
     }
 
-    // Add shipping address
+    // Add shipping address if available
     if (order.shippingAddress) {
       message += `
 *🏠 Shipping Address:*
@@ -262,7 +172,7 @@ ${order.shippingAddress.street || ''}
 ${order.shippingAddress.city || ''}, ${order.shippingAddress.country || ''}`;
     }
 
-    // Add notes
+    // Add notes if available
     if (order.notes && notificationType === 'new_order') {
       message += `
 *📝 Customer Notes:*
@@ -273,17 +183,12 @@ ${order.notes}`;
     if (notificationType !== 'new_order') {
       message += `
 *📊 Order Status:*
-${order.orderStatus || 'pending'}`;
-      
-      if (order.deliveredAt) {
-        message += `\nDelivered: ${new Date(order.deliveredAt).toLocaleDateString()}`;
-      }
-      if (order.confirmedAt) {
-        message += `\nConfirmed: ${new Date(order.confirmedAt).toLocaleDateString()}`;
-      }
+${order.orderStatus || 'pending'}
+${order.deliveredAt ? `Delivered: ${new Date(order.deliveredAt).toLocaleDateString()}` : ''}
+${order.confirmedAt ? `Confirmed: ${new Date(order.confirmedAt).toLocaleDateString()}` : ''}`;
     }
 
-    // Add footer
+    // Add footer with link
     const frontendUrl = process.env.FRONTEND_URL || 'https://your-ecommerce.com';
     message += `
 
@@ -293,15 +198,53 @@ ${frontendUrl}/admin/orders?order=${order.orderNumber}
 *🕒 Notification Time:* ${new Date().toLocaleString('en-US', {
   hour12: true,
   hour: '2-digit',
-  minute: '2-digit'
+  minute: '2-digit',
+  second: '2-digit'
 })}`;
 
     return message;
   }
 
-  formatCurrency(amount) {
-    if (!amount && amount !== 0) return '0';
-    return amount.toLocaleString('en-US');
+  formatPhoneForApi(phoneNumber) {
+    // Remove all non-digit characters
+    let cleaned = phoneNumber.replace(/\D/g, '');
+    
+    // If starts with 0, replace with country code (assume Uganda +256)
+    if (cleaned.startsWith('0')) {
+      cleaned = '256' + cleaned.substring(1);
+    }
+    
+    // If doesn't start with +, add it
+    if (!cleaned.startsWith('+')) {
+      cleaned = '+' + cleaned;
+    }
+    
+    return cleaned;
+  }
+
+  validatePhoneNumber(phoneNumber) {
+    if (!phoneNumber || typeof phoneNumber !== 'string') {
+      return false;
+    }
+    
+    // Remove all non-digit characters
+    const cleaned = phoneNumber.replace(/\D/g, '');
+    
+    // Basic validation: 10-15 digits
+    if (cleaned.length < 10 || cleaned.length > 15) {
+      return false;
+    }
+    
+    // Additional validation for specific countries
+    if (cleaned.startsWith('256')) { // Uganda
+      return cleaned.length === 12; // 256 XXX XXX XXX
+    } else if (cleaned.startsWith('1')) { // US/Canada
+      return cleaned.length === 11; // 1 XXX XXX XXXX
+    } else if (cleaned.startsWith('44')) { // UK
+      return cleaned.length === 12; // 44 XX XXXX XXXX
+    }
+    
+    return true;
   }
 
   generateTestOrder() {
@@ -315,24 +258,24 @@ ${frontendUrl}/admin/orders?order=${order.orderNumber}
       },
       items: [
         {
-          productName: 'iPhone 13 Pro',
-          productBrand: 'Apple',
-          quantity: 1,
-          unitPrice: 4500000,
-          totalPrice: 4500000
+          productName: 'Test Product 1',
+          productBrand: 'Test Brand',
+          quantity: 2,
+          unitPrice: 50000,
+          totalPrice: 100000
         },
         {
-          productName: 'AirPods Pro',
-          productBrand: 'Apple',
+          productName: 'Test Product 2',
+          productBrand: 'Test Brand',
           quantity: 1,
-          unitPrice: 850000,
-          totalPrice: 850000
+          unitPrice: 75000,
+          totalPrice: 75000
         }
       ],
-      subtotal: 5350000,
-      shippingFee: 10000,
-      taxAmount: 963000,
-      totalAmount: 6413000,
+      subtotal: 175000,
+      shippingFee: 5000,
+      taxAmount: 31500,
+      totalAmount: 211500,
       paymentMethod: 'onDelivery',
       paymentStatus: 'pending',
       orderStatus: 'pending',
@@ -350,32 +293,37 @@ ${frontendUrl}/admin/orders?order=${order.orderNumber}
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  // Utility method to send multiple notifications
+  async sendBulkNotifications(configs, order, notificationType, note = '') {
+    const results = [];
+    
+    for (const config of configs) {
+      try {
+        const result = await this.sendOrderNotification(config, order, notificationType, note);
+        results.push({
+          config: { phoneNumber: config.phoneNumber },
+          ...result
+        });
+      } catch (error) {
+        results.push({
+          config: { phoneNumber: config.phoneNumber },
+          success: false,
+          error: error.message
+        });
+      }
+    }
+    
+    return results;
+  }
+
+  // Method to verify API key by sending a simple test message
   async verifyApiKey(phoneNumber, apiKey) {
     try {
-      console.log('🔐 Verifying API key for:', phoneNumber);
-      
-      const validation = this.validateAndFormatPhone(phoneNumber);
-      if (!validation.valid) {
-        return {
-          success: false,
-          message: validation.error
-        };
-      }
-      
       const testMessage = '✅ WhatsApp notifications are working correctly!\n\nThis is a verification message from ElectroShop.\n\nYou will receive order notifications on this number.';
       const encodedMessage = encodeURIComponent(testMessage);
-      const url = `${this.baseURL}?phone=${validation.formatted}&text=${encodedMessage}&apikey=${apiKey}`;
+      const url = `${this.baseURL}?phone=${this.formatPhoneForApi(phoneNumber)}&text=${encodedMessage}&apikey=${apiKey}`;
       
-      console.log('🔐 Verification URL (first 100 chars):', url.substring(0, 100) + '...');
-      
-      const response = await axios.get(url, { 
-        timeout: 10000,
-        headers: {
-          'User-Agent': 'ElectroShop-Backend/1.0'
-        }
-      });
-      
-      console.log('🔐 Verification response:', response.data);
+      const response = await axios.get(url, { timeout: 10000 });
       
       return {
         success: true,
@@ -383,7 +331,6 @@ ${frontendUrl}/admin/orders?order=${order.orderNumber}
         data: response.data
       };
     } catch (error) {
-      console.error('🔐 Verification error:', error.message);
       return {
         success: false,
         message: error.message,
@@ -392,9 +339,13 @@ ${frontendUrl}/admin/orders?order=${order.orderNumber}
     }
   }
 
-  validatePhoneNumber(phoneNumber) {
-    const validation = this.validateAndFormatPhone(phoneNumber);
-    return validation.valid;
+  // Create hash for caching/rate limiting
+  createNotificationHash(orderId, notificationType) {
+    return crypto
+      .createHash('md5')
+      .update(`${orderId}-${notificationType}-${Date.now()}`)
+      .digest('hex')
+      .slice(0, 8);
   }
 }
 

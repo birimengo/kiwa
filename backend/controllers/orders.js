@@ -3,7 +3,6 @@ const Product = require('../models/Product');
 const Sale = require('../models/Sale');
 const Notification = require('../models/Notification');
 const WhatsAppConfig = require('../models/WhatsAppConfig');
-const WhatsAppLog = require('../models/WhatsAppLog');
 const whatsappService = require('../services/whatsappService');
 const mongoose = require('mongoose');
 
@@ -88,406 +87,85 @@ async function createOrderNotification(order, type = 'new_order', note = '') {
   }
 }
 
-// Helper function to send WhatsApp notifications - UPDATED
+// Helper function to send WhatsApp notifications
 async function sendWhatsAppOrderNotification(order, notificationType, note = '') {
-  console.log('\n📱 === WHATSAPP NOTIFICATION START ===');
-  console.log(`📱 Processing ${notificationType} for order: ${order.orderNumber}`);
-  
   try {
-    // Map notification type to preference key
     let notificationPrefKey = '';
     switch(notificationType) {
       case 'new_order':
         notificationPrefKey = 'newOrders';
-        console.log('📱 Notification type: New Order');
         break;
       case 'processing':
       case 'delivered':
       case 'confirmed':
       case 'cancelled':
         notificationPrefKey = 'orderUpdates';
-        console.log('📱 Notification type: Order Update');
         break;
       default:
-        console.log('❌ Unknown notification type:', notificationType);
-        return [];
+        return;
     }
     
-    console.log(`📱 Looking for WhatsApp configs with: notifications.${notificationPrefKey} = true`);
-    
-    // Find ALL active WhatsApp configurations first
-    const allConfigs = await WhatsAppConfig.find({
+    // Get all active admin WhatsApp configurations
+    const adminConfigs = await WhatsAppConfig.find({
       isActive: true,
-      phoneNumber: { $exists: true, $ne: '' }
-    })
-    .select('+apiKey')
-    .populate('user', 'name email role')
-    .lean();
-    
-    console.log(`📱 Found ${allConfigs.length} total active WhatsApp configs`);
-    
-    // Filter by notification preference
-    const adminConfigs = allConfigs.filter(config => {
-      const hasApiKey = config.apiKey && config.apiKey.trim() !== '';
-      const hasNotificationPref = config.notifications && config.notifications[notificationPrefKey] === true;
-      
-      console.log(`📱 Config for ${config.user?.name || 'Unknown'}:`);
-      console.log(`   - Phone: ${config.phoneNumber}`);
-      console.log(`   - Has API Key: ${hasApiKey}`);
-      console.log(`   - ${notificationPrefKey}: ${hasNotificationPref}`);
-      console.log(`   - All Notifications:`, config.notifications);
-      
-      return hasApiKey && hasNotificationPref;
-    });
-    
-    console.log(`📱 After filtering: ${adminConfigs.length} configs match all criteria`);
-    
+      [`notifications.${notificationPrefKey}`]: true
+    }).populate('user', 'name email');
+
     if (adminConfigs.length === 0) {
-      console.log('❌ No WhatsApp configurations found that match all criteria:');
-      console.log('   1. isActive: true');
-      console.log('   2. phoneNumber exists and not empty');
-      console.log('   3. apiKey exists and not empty');
-      console.log(`   4. notifications.${notificationPrefKey}: true`);
-      
-      // Log why configurations were filtered out
-      allConfigs.forEach((config, index) => {
-        const hasApiKey = config.apiKey && config.apiKey.trim() !== '';
-        const hasNotificationPref = config.notifications && config.notifications[notificationPrefKey] === true;
-        
-        if (!hasApiKey) {
-          console.log(`   Config ${index + 1} (${config.user?.name}): Missing API Key`);
-        } else if (!hasNotificationPref) {
-          console.log(`   Config ${index + 1} (${config.user?.name}): ${notificationPrefKey} is false`);
-        }
-      });
-      
-      return [];
+      console.log('📱 No active WhatsApp configurations found for admins');
+      return;
     }
-    
-    // Send notifications
-    const results = [];
-    for (const config of adminConfigs) {
-      try {
-        console.log(`\n📱 Sending to ${config.user?.name || 'Unknown'} (${config.phoneNumber})...`);
-        
-        const result = await whatsappService.sendOrderNotification(
-          {
-            phoneNumber: config.phoneNumber,
-            apiKey: config.apiKey
-          },
-          order,
-          notificationType,
-          note
-        );
-        
-        console.log(`✅ Result for ${config.phoneNumber}: ${result.success ? 'SUCCESS' : 'FAILED'}`);
-        if (!result.success) {
-          console.log(`   Error: ${result.message}`);
-        }
-        
-        // Log to database
+
+    // Send notification to each admin
+    const promises = adminConfigs.map(async (config) => {
+      if (config.phoneNumber && config.apiKey) {
         try {
-          await WhatsAppLog.create({
-            user: config.user?._id,
-            type: notificationType,
-            phoneNumber: config.phoneNumber,
-            orderNumber: order.orderNumber,
-            orderId: order._id,
-            message: result.message || `Order ${notificationType} notification`,
-            success: result.success,
-            response: result.data,
-            error: result.success ? null : result.message
-          });
-        } catch (logError) {
-          console.error('❌ Failed to save WhatsApp log:', logError.message);
+          await whatsappService.sendOrderNotification(
+            {
+              phoneNumber: config.phoneNumber,
+              apiKey: config.apiKey
+            },
+            order,
+            notificationType,
+            note
+          );
+        } catch (error) {
+          console.error(`❌ Error sending WhatsApp to ${config.phoneNumber}:`, error.message);
         }
-        
-        results.push({
-          user: config.user?.name || 'Unknown',
-          phone: config.phoneNumber,
-          success: result.success,
-          message: result.message
-        });
-        
-      } catch (error) {
-        console.error(`❌ Error sending to ${config.phoneNumber}:`, error.message);
-        
-        // Log error to database
-        try {
-          await WhatsAppLog.create({
-            user: config.user?._id,
-            type: notificationType,
-            phoneNumber: config.phoneNumber,
-            orderNumber: order.orderNumber,
-            orderId: order._id,
-            success: false,
-            error: error.message
-          });
-        } catch (logError) {
-          console.error('❌ Failed to save error log:', logError.message);
-        }
-        
-        results.push({
-          user: config.user?.name || 'Unknown',
-          phone: config.phoneNumber,
-          success: false,
-          error: error.message
-        });
       }
-    }
-    
-    console.log('\n📱 === WHATSAPP NOTIFICATION SUMMARY ===');
-    console.log(`📱 Total attempts: ${results.length}`);
-    console.log(`📱 Successful: ${results.filter(r => r.success).length}`);
-    console.log(`📱 Failed: ${results.filter(r => !r.success).length}`);
-    
-    if (results.filter(r => !r.success).length > 0) {
-      console.log('\n📱 Failed notifications:');
-      results.filter(r => !r.success).forEach((r, i) => {
-        console.log(`   ${i + 1}. ${r.user} (${r.phone}): ${r.error || r.message}`);
-      });
-    }
-    
-    console.log('📱 === WHATSAPP NOTIFICATION END ===\n');
-    
-    return results;
+    });
+
+    await Promise.all(promises);
+    console.log(`📱 WhatsApp notifications sent for order ${order.orderNumber}`);
     
   } catch (error) {
-    console.error('❌ CRITICAL ERROR in WhatsApp notification system:', error);
-    console.error('Stack trace:', error.stack);
-    
-    // Log system error
-    try {
-      await WhatsAppLog.create({
-        type: notificationType,
-        orderNumber: order?.orderNumber || 'Unknown',
-        orderId: order?._id,
-        success: false,
-        error: `System error: ${error.message}`
-      });
-    } catch (logError) {
-      console.error('❌ Failed to log system error:', logError.message);
-    }
-    
-    return [];
+    console.error('❌ Error in WhatsApp notification system:', error);
   }
 }
-
-// @desc    Test WhatsApp notification manually
-// @route   POST /api/orders/test/whatsapp
-// @access  Private/Admin
-exports.testWhatsAppOrder = async (req, res) => {
-  try {
-    console.log('\n🧪 === MANUAL WHATSAPP TEST START ===');
-    
-    // Get current user's WhatsApp config
-    const userConfig = await WhatsAppConfig.findOne({ user: req.user.id })
-      .select('+apiKey')
-      .populate('user', 'name email')
-      .lean();
-    
-    if (!userConfig) {
-      console.log('❌ User has no WhatsApp configuration');
-      return res.status(400).json({
-        success: false,
-        message: 'You have not configured WhatsApp notifications yet'
-      });
-    }
-    
-    console.log('📱 User config found:');
-    console.log('   Name:', userConfig.user?.name);
-    console.log('   Phone:', userConfig.phoneNumber);
-    console.log('   API Key present:', !!userConfig.apiKey);
-    console.log('   Is Active:', userConfig.isActive);
-    console.log('   Notifications:', userConfig.notifications);
-    
-    // Create test order
-    const testOrder = {
-      _id: new mongoose.Types.ObjectId(),
-      orderNumber: 'TEST-' + Date.now().toString().slice(-6),
-      customer: {
-        name: 'Test Customer',
-        phone: '+256700000000',
-        location: 'Kampala, Uganda',
-        email: 'test@example.com'
-      },
-      items: [
-        {
-          productName: 'iPhone 13 Pro',
-          productBrand: 'Apple',
-          quantity: 1,
-          unitPrice: 4500000,
-          totalPrice: 4500000
-        },
-        {
-          productName: 'AirPods Pro',
-          productBrand: 'Apple',
-          quantity: 1,
-          unitPrice: 850000,
-          totalPrice: 850000
-        }
-      ],
-      subtotal: 5350000,
-      shippingFee: 10000,
-      taxAmount: 963000,
-      totalAmount: 6413000,
-      paymentMethod: 'onDelivery',
-      paymentStatus: 'pending',
-      orderStatus: 'pending',
-      shippingAddress: {
-        street: 'Test Street 123',
-        city: 'Kampala',
-        country: 'Uganda'
-      },
-      notes: 'This is a test order to verify WhatsApp integration',
-      createdAt: new Date()
-    };
-    
-    console.log(`🧪 Test order created: ${testOrder.orderNumber}`);
-    console.log('🧪 Total amount:', testOrder.totalAmount);
-    
-    // Send test notification
-    const result = await whatsappService.sendOrderNotification(
-      {
-        phoneNumber: userConfig.phoneNumber,
-        apiKey: userConfig.apiKey
-      },
-      testOrder,
-      'new_order',
-      'Manual test notification from admin panel'
-    );
-    
-    // Update config with test result
-    await WhatsAppConfig.findByIdAndUpdate(userConfig._id, {
-      lastTestAt: new Date(),
-      lastTestStatus: result.success ? 'success' : 'failed'
-    });
-    
-    // Log the test
-    await WhatsAppLog.create({
-      user: req.user.id,
-      type: 'test',
-      phoneNumber: userConfig.phoneNumber,
-      orderNumber: testOrder.orderNumber,
-      success: result.success,
-      message: result.message,
-      response: result.data,
-      error: result.success ? null : result.message
-    });
-    
-    console.log('🧪 Test result:', result.success ? 'SUCCESS' : 'FAILED');
-    if (!result.success) {
-      console.log('🧪 Error:', result.message);
-    }
-    
-    console.log('🧪 === MANUAL WHATSAPP TEST END ===\n');
-    
-    res.json({
-      success: result.success,
-      message: result.success 
-        ? 'Test notification sent successfully! Check your WhatsApp.' 
-        : 'Failed to send test notification',
-      orderNumber: testOrder.orderNumber,
-      timestamp: new Date(),
-      details: result
-    });
-    
-  } catch (error) {
-    console.error('❌ Manual WhatsApp test error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error during WhatsApp test',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Get all WhatsApp configurations (admin only)
-// @route   GET /api/orders/whatsapp/configs
-// @access  Private/Admin
-exports.getWhatsAppConfigs = async (req, res) => {
-  try {
-    const configs = await WhatsAppConfig.find({})
-      .populate('user', 'name email role')
-      .select('-apiKey') // Don't expose API key
-      .lean();
-    
-    // Count active configs
-    const activeConfigs = await WhatsAppConfig.countDocuments({
-      isActive: true,
-      phoneNumber: { $exists: true, $ne: '' },
-      apiKey: { $exists: true, $ne: '' }
-    });
-    
-    // Get recent logs
-    const recentLogs = await WhatsAppLog.find({})
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .populate('user', 'name')
-      .lean();
-    
-    res.json({
-      success: true,
-      stats: {
-        total: configs.length,
-        active: activeConfigs,
-        inactive: configs.length - activeConfigs
-      },
-      configs: configs.map(c => ({
-        id: c._id,
-        user: {
-          name: c.user?.name || 'Unknown',
-          email: c.user?.email,
-          role: c.user?.role
-        },
-        phoneNumber: c.phoneNumber,
-        isActive: c.isActive,
-        notifications: c.notifications,
-        lastTestAt: c.lastTestAt,
-        lastTestStatus: c.lastTestStatus,
-        createdAt: c.createdAt
-      })),
-      recentLogs: recentLogs.map(l => ({
-        type: l.type,
-        orderNumber: l.orderNumber,
-        phone: l.phoneNumber,
-        success: l.success,
-        message: l.error || l.message,
-        timestamp: l.createdAt
-      }))
-    });
-    
-  } catch (error) {
-    console.error('❌ Get WhatsApp configs error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching WhatsApp configurations',
-      error: error.message
-    });
-  }
-};
 
 // @desc    Create new order
 // @route   POST /api/orders
 // @access  Private
 exports.createOrder = async (req, res) => {
-  console.log('\n🛒 === ORDER CREATION START ===');
+  console.log('🛒 Starting order creation process...');
   
   const session = await mongoose.startSession();
   
   try {
+    console.log('🔄 Starting database transaction...');
     await session.startTransaction();
+    
     const { items, paymentMethod, customerInfo, notes, shippingAddress } = req.body;
 
-    console.log('📦 Order details:');
-    console.log('   Items:', items?.length);
-    console.log('   Customer:', customerInfo?.name);
-    console.log('   Phone:', customerInfo?.phone);
-    console.log('   Location:', customerInfo?.location);
-    console.log('   Payment:', paymentMethod);
+    console.log('🛒 Creating new order with data:', { 
+      itemsCount: items?.length,
+      customerName: customerInfo?.name,
+      paymentMethod 
+    });
 
     // Validate required fields
     if (!items || !Array.isArray(items) || items.length === 0) {
+      console.error('❌ No items in order');
       await session.abortTransaction();
       await session.endSession();
       return res.status(400).json({
@@ -497,6 +175,7 @@ exports.createOrder = async (req, res) => {
     }
 
     if (!customerInfo || !customerInfo.name || !customerInfo.phone || !customerInfo.location) {
+      console.error('❌ Missing customer information');
       await session.abortTransaction();
       await session.endSession();
       return res.status(400).json({
@@ -505,11 +184,14 @@ exports.createOrder = async (req, res) => {
       });
     }
 
-    // Process order items
+    // Process order items and validate stock
     const orderItems = [];
     let subtotal = 0;
 
     for (const cartItem of items) {
+      console.log('📦 Processing cart item:', cartItem);
+      
+      // Extract product ID - handle both object and string formats
       let productId;
       if (typeof cartItem.product === 'string') {
         productId = cartItem.product;
@@ -518,6 +200,7 @@ exports.createOrder = async (req, res) => {
       } else if (cartItem.product && cartItem.product.id) {
         productId = cartItem.product.id;
       } else {
+        console.error('❌ Invalid product ID structure:', cartItem);
         await session.abortTransaction();
         await session.endSession();
         return res.status(400).json({
@@ -526,7 +209,9 @@ exports.createOrder = async (req, res) => {
         });
       }
 
+      // Validate product ID format
       if (!mongoose.Types.ObjectId.isValid(productId)) {
+        console.error('❌ Invalid product ID format:', productId);
         await session.abortTransaction();
         await session.endSession();
         return res.status(400).json({
@@ -535,8 +220,13 @@ exports.createOrder = async (req, res) => {
         });
       }
 
+      console.log('🔍 Looking for product with ID:', productId);
+
+      // Find product with session
       const product = await Product.findById(productId).session(session);
+      
       if (!product) {
+        console.error('❌ Product not found with ID:', productId);
         await session.abortTransaction();
         await session.endSession();
         return res.status(404).json({
@@ -545,7 +235,10 @@ exports.createOrder = async (req, res) => {
         });
       }
 
+      console.log('✅ Found product:', product.name);
+
       if (!product.isActive) {
+        console.error('❌ Product not active:', product.name);
         await session.abortTransaction();
         await session.endSession();
         return res.status(400).json({
@@ -555,6 +248,7 @@ exports.createOrder = async (req, res) => {
       }
 
       if (product.stock < cartItem.quantity) {
+        console.error(`❌ Insufficient stock for ${product.name}: ${product.stock} < ${cartItem.quantity}`);
         await session.abortTransaction();
         await session.endSession();
         return res.status(400).json({
@@ -579,13 +273,22 @@ exports.createOrder = async (req, res) => {
       subtotal += totalPrice;
 
       // Update product stock
-      product.stock -= cartItem.quantity;
+      const previousStock = product.stock;
+      const newStock = previousStock - cartItem.quantity;
+      
+      console.log(`📊 Updating stock for ${product.name}: ${previousStock} -> ${newStock}`);
+      
+      product.stock = newStock;
       product.totalSold += cartItem.quantity;
+      
+      // Add to stock history
       product.stockHistory.push({
-        previousStock: product.stock + cartItem.quantity,
-        newStock: product.stock,
+        previousStock,
+        newStock,
         unitsChanged: -cartItem.quantity,
         type: 'sale',
+        reference: null,
+        referenceModel: 'Order',
         user: req.user.id,
         notes: `Order: ${cartItem.quantity} units sold`
       });
@@ -593,20 +296,17 @@ exports.createOrder = async (req, res) => {
       await product.save({ session });
     }
 
-    // Calculate totals
+    // Calculate shipping fee and tax
     const shippingFee = calculateShippingFee(orderItems, customerInfo.location);
     const taxAmount = calculateTaxAmount(subtotal);
     const totalAmount = subtotal + shippingFee + taxAmount;
 
-    console.log('💰 Order totals:');
-    console.log('   Subtotal:', subtotal);
-    console.log('   Shipping:', shippingFee);
-    console.log('   Tax:', taxAmount);
-    console.log('   Total:', totalAmount);
+    console.log('💰 Order totals:', { subtotal, shippingFee, taxAmount, totalAmount });
 
     // Generate order number
     const orderNumber = await generateOrderNumber();
-    console.log('📝 Order number:', orderNumber);
+    
+    console.log('📝 Creating order document...');
     
     // Create order
     const order = new Order({
@@ -635,28 +335,29 @@ exports.createOrder = async (req, res) => {
     await order.save({ session });
 
     // Update stock history with order reference
+    console.log('🔄 Updating stock history with order references...');
     for (const item of order.items) {
       const product = await Product.findById(item.product).session(session);
       if (product && product.stockHistory.length > 0) {
-        product.stockHistory[product.stockHistory.length - 1].reference = order._id;
+        const stockEntry = product.stockHistory[product.stockHistory.length - 1];
+        stockEntry.reference = order._id;
         await product.save({ session });
       }
     }
 
-    // Create notification for admins
+    // Create notification for admin users
     await createOrderNotification(order, 'new_order');
     
-    // Send WhatsApp notification
-    console.log('\n📱 Attempting WhatsApp notification...');
-    const whatsappResult = await sendWhatsAppOrderNotification(order, 'new_order');
-    console.log('📱 WhatsApp result:', whatsappResult.length > 0 ? 'Attempted' : 'No configs found');
+    // Send WhatsApp notification for new order
+    await sendWhatsAppOrderNotification(order, 'new_order');
 
+    console.log('✅ Committing transaction...');
     await session.commitTransaction();
     await session.endSession();
     
     console.log('✅ Order created successfully:', orderNumber);
-    console.log('🛒 === ORDER CREATION END ===\n');
 
+    // Populate order data for response
     const populatedOrder = await Order.findById(order._id)
       .populate('customer.user', 'name email')
       .populate('items.product', 'name images');
@@ -664,8 +365,6 @@ exports.createOrder = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Order created successfully',
-      whatsappNotification: whatsappResult.length > 0,
-      whatsappResult: whatsappResult,
       order: {
         _id: populatedOrder._id,
         orderNumber: populatedOrder.orderNumber,
@@ -685,9 +384,11 @@ exports.createOrder = async (req, res) => {
   } catch (error) {
     console.error('❌ Create order error:', error);
     
+    // Handle transaction cleanup
     if (session) {
       try {
         if (session.inTransaction()) {
+          console.log('🔄 Aborting transaction due to error...');
           await session.abortTransaction();
         }
         await session.endSession();
@@ -712,7 +413,10 @@ exports.getMyOrders = async (req, res) => {
     const { page = 1, limit = 10, status } = req.query;
     
     let query = { 'customer.user': req.user.id };
-    if (status && status !== 'all') query.orderStatus = status;
+    
+    if (status && status !== 'all') {
+      query.orderStatus = status;
+    }
     
     const skip = (page - 1) * limit;
     
@@ -724,6 +428,8 @@ exports.getMyOrders = async (req, res) => {
       .lean();
     
     const total = await Order.countDocuments(query);
+    
+    console.log(`📋 Fetched ${orders.length} orders for user ${req.user.id}`);
     
     res.json({
       success: true,
@@ -763,12 +469,15 @@ exports.getOrder = async (req, res) => {
       });
     }
     
+    // Check if user owns the order or is admin
     if (order.customer.user._id.toString() !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to access this order'
       });
     }
+    
+    console.log(`📦 Fetched order ${order.orderNumber} for user ${req.user.id}`);
     
     res.json({
       success: true,
@@ -796,6 +505,7 @@ exports.updateOrderStatus = async (req, res) => {
     const { orderStatus, note } = req.body;
     
     const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
+    
     if (!validStatuses.includes(orderStatus)) {
       await session.abortTransaction();
       await session.endSession();
@@ -806,6 +516,7 @@ exports.updateOrderStatus = async (req, res) => {
     }
     
     const order = await Order.findById(req.params.id).session(session);
+    
     if (!order) {
       await session.abortTransaction();
       await session.endSession();
@@ -817,6 +528,8 @@ exports.updateOrderStatus = async (req, res) => {
     
     const previousStatus = order.orderStatus;
     order.orderStatus = orderStatus;
+    
+    // Add to status history
     order.statusHistory.push({
       status: orderStatus,
       note: note || `Status changed from ${previousStatus} to ${orderStatus}`,
@@ -826,18 +539,26 @@ exports.updateOrderStatus = async (req, res) => {
     if (orderStatus === 'delivered') {
       order.deliveredAt = new Date();
       order.deliveredBy = req.user.id;
+      // Create notification for delivered order
       await createOrderNotification(order, 'delivered', note);
+      // Send WhatsApp notification
       await sendWhatsAppOrderNotification(order, 'delivered', note);
     } else if (orderStatus === 'cancelled') {
       order.cancelledAt = new Date();
       order.cancellationReason = note || 'Order cancelled by admin';
+      // Create notification for cancelled order
       await createOrderNotification(order, 'cancelled', order.cancellationReason);
+      // Send WhatsApp notification
       await sendWhatsAppOrderNotification(order, 'cancelled', order.cancellationReason);
+      // Restore product stock if order is cancelled
       await restoreOrderStock(order, req.user.id, session);
     } else if (orderStatus === 'processing') {
+      // Create notification for processing order
       await createOrderNotification(order, 'processing', note);
+      // Send WhatsApp notification
       await sendWhatsAppOrderNotification(order, 'processing', note);
     } else if (orderStatus === 'confirmed') {
+      // Send WhatsApp notification for confirmed order
       await sendWhatsAppOrderNotification(order, 'confirmed', note);
     }
     
@@ -886,6 +607,7 @@ exports.cancelOrder = async (req, res) => {
     const { reason } = req.body;
     
     const order = await Order.findById(req.params.id).session(session);
+    
     if (!order) {
       await session.abortTransaction();
       await session.endSession();
@@ -895,6 +617,7 @@ exports.cancelOrder = async (req, res) => {
       });
     }
     
+    // Check if user owns the order
     if (order.customer.user.toString() !== req.user.id) {
       await session.abortTransaction();
       await session.endSession();
@@ -904,6 +627,7 @@ exports.cancelOrder = async (req, res) => {
       });
     }
     
+    // Only allow cancellation for pending orders
     if (order.orderStatus !== 'pending') {
       await session.abortTransaction();
       await session.endSession();
@@ -913,22 +637,32 @@ exports.cancelOrder = async (req, res) => {
       });
     }
     
+    const previousStatus = order.orderStatus;
     order.orderStatus = 'cancelled';
     order.cancelledAt = new Date();
     order.cancellationReason = reason || 'Cancelled by customer';
+    
+    // Add to status history
     order.statusHistory.push({
       status: 'cancelled',
       note: `Order cancelled by user. Reason: ${reason || 'Not specified'}`,
       changedBy: req.user.id
     });
     
+    // Create notification for cancelled order
     await createOrderNotification(order, 'cancelled', order.cancellationReason);
+    
+    // Send WhatsApp notification
     await sendWhatsAppOrderNotification(order, 'cancelled', order.cancellationReason);
+    
+    // Restore product stock
     await restoreOrderStock(order, req.user.id, session);
     
     await order.save({ session });
     await session.commitTransaction();
     await session.endSession();
+    
+    console.log(`❌ Order ${order.orderNumber} cancelled by user ${req.user.id}`);
     
     res.json({
       success: true,
@@ -968,6 +702,7 @@ exports.processOrder = async (req, res) => {
     await session.startTransaction();
     
     const order = await Order.findById(req.params.id).session(session);
+    
     if (!order) {
       await session.abortTransaction();
       await session.endSession();
@@ -986,20 +721,28 @@ exports.processOrder = async (req, res) => {
       });
     }
     
+    const previousStatus = order.orderStatus;
     order.orderStatus = 'processing';
     order.processedBy = req.user.id;
+    
+    // Add to status history
     order.statusHistory.push({
       status: 'processing',
-      note: 'Order processed by admin',
+      note: `Order processed by admin and moved to processing`,
       changedBy: req.user.id
     });
     
+    // Create notification for processing order
     await createOrderNotification(order, 'processing');
+    
+    // Send WhatsApp notification
     await sendWhatsAppOrderNotification(order, 'processing');
     
     await order.save({ session });
     await session.commitTransaction();
     await session.endSession();
+    
+    console.log(`🔄 Order ${order.orderNumber} processed by admin ${req.user.id}`);
     
     res.json({
       success: true,
@@ -1039,6 +782,7 @@ exports.deliverOrder = async (req, res) => {
     await session.startTransaction();
     
     const order = await Order.findById(req.params.id).session(session);
+    
     if (!order) {
       await session.abortTransaction();
       await session.endSession();
@@ -1057,21 +801,29 @@ exports.deliverOrder = async (req, res) => {
       });
     }
     
+    const previousStatus = order.orderStatus;
     order.orderStatus = 'delivered';
     order.deliveredAt = new Date();
     order.deliveredBy = req.user.id;
+    
+    // Add to status history
     order.statusHistory.push({
       status: 'delivered',
-      note: 'Order delivered by admin',
+      note: `Order delivered by admin`,
       changedBy: req.user.id
     });
     
+    // Create notification for delivered order
     await createOrderNotification(order, 'delivered');
+    
+    // Send WhatsApp notification
     await sendWhatsAppOrderNotification(order, 'delivered');
     
     await order.save({ session });
     await session.commitTransaction();
     await session.endSession();
+    
+    console.log(`🚚 Order ${order.orderNumber} delivered by admin ${req.user.id}`);
     
     res.json({
       success: true,
@@ -1112,6 +864,7 @@ exports.rejectOrder = async (req, res) => {
     const { reason } = req.body;
     
     const order = await Order.findById(req.params.id).session(session);
+    
     if (!order) {
       await session.abortTransaction();
       await session.endSession();
@@ -1130,22 +883,32 @@ exports.rejectOrder = async (req, res) => {
       });
     }
     
+    const previousStatus = order.orderStatus;
     order.orderStatus = 'cancelled';
     order.cancelledAt = new Date();
     order.cancellationReason = reason || 'Rejected by admin';
+    
+    // Add to status history
     order.statusHistory.push({
       status: 'cancelled',
       note: `Order rejected by admin. Reason: ${reason || 'Not specified'}`,
       changedBy: req.user.id
     });
     
+    // Create notification for rejected order
     await createOrderNotification(order, 'cancelled', order.cancellationReason);
+    
+    // Send WhatsApp notification
     await sendWhatsAppOrderNotification(order, 'cancelled', order.cancellationReason);
+    
+    // Restore product stock
     await restoreOrderStock(order, req.user.id, session);
     
     await order.save({ session });
     await session.commitTransaction();
     await session.endSession();
+    
+    console.log(`❌ Order ${order.orderNumber} rejected by admin ${req.user.id}`);
     
     res.json({
       success: true,
@@ -1186,6 +949,7 @@ exports.confirmDelivery = async (req, res) => {
     const { confirmationNote } = req.body;
     
     const order = await Order.findById(req.params.id).session(session);
+    
     if (!order) {
       await session.abortTransaction();
       await session.endSession();
@@ -1195,6 +959,7 @@ exports.confirmDelivery = async (req, res) => {
       });
     }
     
+    // Check if user owns the order
     if (order.customer.user.toString() !== req.user.id) {
       await session.abortTransaction();
       await session.endSession();
@@ -1204,6 +969,7 @@ exports.confirmDelivery = async (req, res) => {
       });
     }
     
+    // Only allow confirmation for delivered orders
     if (order.orderStatus !== 'delivered') {
       await session.abortTransaction();
       await session.endSession();
@@ -1213,24 +979,33 @@ exports.confirmDelivery = async (req, res) => {
       });
     }
     
+    const previousStatus = order.orderStatus;
     order.orderStatus = 'confirmed';
     order.confirmedAt = new Date();
     order.confirmedBy = req.user.id;
+    
+    // Add to status history
     order.statusHistory.push({
       status: 'confirmed',
       note: `Delivery confirmed by customer. Note: ${confirmationNote || 'No note provided'}`,
       changedBy: req.user.id
     });
     
+    // Create notification for confirmed order
     await createOrderNotification(order, 'confirmed', confirmationNote);
+    
+    // Send WhatsApp notification
     await sendWhatsAppOrderNotification(order, 'confirmed', confirmationNote);
     
+    // Create sale record when order is confirmed
     const sale = await createSaleFromOrder(order, req.user.id, session);
     order.saleReference = sale._id;
     
     await order.save({ session });
     await session.commitTransaction();
     await session.endSession();
+    
+    console.log(`✅ Order ${order.orderNumber} delivery confirmed by user ${req.user.id}`);
     
     res.json({
       success: true,
@@ -1269,27 +1044,48 @@ exports.getOrderStats = async (req, res) => {
     
     let startDate = new Date();
     switch (period) {
-      case 'today': startDate.setHours(0, 0, 0, 0); break;
-      case 'week': startDate.setDate(startDate.getDate() - 7); break;
-      case 'month': startDate.setMonth(startDate.getMonth() - 1); break;
-      case 'year': startDate.setFullYear(startDate.getFullYear() - 1); break;
-      default: startDate.setMonth(startDate.getMonth() - 1);
+      case 'today':
+        startDate.setHours(0, 0, 0, 0);
+        break;
+      case 'week':
+        startDate.setDate(startDate.getDate() - 7);
+        break;
+      case 'month':
+        startDate.setMonth(startDate.getMonth() - 1);
+        break;
+      case 'year':
+        startDate.setFullYear(startDate.getFullYear() - 1);
+        break;
+      default:
+        startDate.setMonth(startDate.getMonth() - 1);
     }
     
     const stats = await Order.aggregate([
       {
-        $match: { createdAt: { $gte: startDate } }
+        $match: {
+          createdAt: { $gte: startDate }
+        }
       },
       {
         $group: {
           _id: null,
           totalOrders: { $sum: 1 },
           totalRevenue: { $sum: '$totalAmount' },
-          pendingOrders: { $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] } },
-          processingOrders: { $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] } },
-          deliveredOrders: { $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] } },
-          confirmedOrders: { $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] } },
-          cancelledOrders: { $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] } },
+          pendingOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] }
+          },
+          processingOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] }
+          },
+          deliveredOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
+          },
+          confirmedOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] }
+          },
+          cancelledOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
+          },
           averageOrderValue: { $avg: '$totalAmount' }
         }
       }
@@ -1330,8 +1126,13 @@ exports.getAllOrders = async (req, res) => {
     const { page = 1, limit = 10, status, startDate, endDate } = req.query;
     
     let query = {};
-    if (status && status !== 'all') query.orderStatus = status;
     
+    // Status filter
+    if (status && status !== 'all') {
+      query.orderStatus = status;
+    }
+    
+    // Date range filter
     if (startDate || endDate) {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
@@ -1352,6 +1153,8 @@ exports.getAllOrders = async (req, res) => {
       .lean();
     
     const total = await Order.countDocuments(query);
+    
+    console.log(`📋 Admin fetched ${orders.length} orders`);
     
     res.json({
       success: true,
@@ -1427,12 +1230,24 @@ exports.getDashboardStats = async (req, res) => {
           _id: null,
           totalOrders: { $sum: 1 },
           totalRevenue: { $sum: '$totalAmount' },
-          pendingOrders: { $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] } },
-          confirmedOrders: { $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] } },
-          processingOrders: { $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] } },
-          shippedOrders: { $sum: { $cond: [{ $eq: ['$orderStatus', 'shipped'] }, 1, 0] } },
-          deliveredOrders: { $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] } },
-          cancelledOrders: { $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] } }
+          pendingOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] }
+          },
+          confirmedOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] }
+          },
+          processingOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] }
+          },
+          shippedOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'shipped'] }, 1, 0] }
+          },
+          deliveredOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
+          },
+          cancelledOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
+          }
         }
       }
     ]);
@@ -1472,6 +1287,7 @@ async function createSaleFromOrder(order, userId, session = null) {
   console.log(`💰 Creating sale from confirmed order: ${order.orderNumber}`);
   
   try {
+    // Get product costs for profit calculation
     const saleItems = await Promise.all(
       order.items.map(async (item) => {
         const product = await Product.findById(item.product);
@@ -1601,10 +1417,12 @@ async function restoreOrderStock(order, userId, session = null) {
 
 // Helper function to calculate shipping fee
 function calculateShippingFee(items, location) {
-  const baseFee = 5000;
-  const perItemFee = 1000;
+  // Basic shipping calculation
+  const baseFee = 5000; // 5000 UGX base fee
+  const perItemFee = 1000; // 1000 UGX per item
   const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
   
+  // Additional fee for remote locations
   let locationFee = 0;
   const remoteAreas = ['entebbe', 'mukono', 'wakiso'];
   const isRemote = remoteAreas.some(area => 
@@ -1620,6 +1438,6 @@ function calculateShippingFee(items, location) {
 
 // Helper function to calculate tax
 function calculateTaxAmount(subtotal) {
-  const taxRate = 0.18;
+  const taxRate = 0.18; // 18% VAT in Uganda
   return subtotal * taxRate;
 }
