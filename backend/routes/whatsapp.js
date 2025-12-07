@@ -6,7 +6,10 @@ const {
   deactivate,
   getNotificationLogs,
   verifyApiKey,
-  getStats
+  getStats,
+  debugWhatsApp,          // Added
+  clearLogs,             // Added
+  getAllAdminConfigs     // Added
 } = require('../controllers/whatsappController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -31,7 +34,15 @@ router.post('/verify', verifyApiKey);
 // Statistics
 router.get('/stats', getStats);
 
-// Notification logs (optional - for debugging)
-router.get('/logs', getNotificationLogs);
+// Notification logs (for debugging)
+router.route('/logs')
+  .get(getNotificationLogs)
+  .delete(clearLogs); // Added DELETE endpoint
+
+// Debug endpoint
+router.get('/debug', debugWhatsApp);
+
+// System endpoints (admin only)
+router.get('/admin/configs', getAllAdminConfigs);
 
 module.exports = router;
