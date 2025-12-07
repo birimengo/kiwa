@@ -87,7 +87,7 @@ async function createOrderNotification(order, type = 'new_order', note = '') {
   }
 }
 
-// Helper function to send WhatsApp notifications
+// Helper function to send WhatsApp notifications - FIXED VERSION
 async function sendWhatsAppOrderNotification(order, notificationType, note = '') {
   try {
     let notificationPrefKey = '';
@@ -105,11 +105,37 @@ async function sendWhatsAppOrderNotification(order, notificationType, note = '')
         return;
     }
     
-    // Get all active admin WhatsApp configurations
+    console.log(`📱 Looking for WhatsApp configs for ${notificationType} (preference: ${notificationPrefKey})`);
+    
+    // Get User model
+    const User = require('../models/User');
+    
+    // Get all active admin users
+    const adminUsers = await User.find({ 
+      role: 'admin', 
+      isActive: true 
+    }).select('_id').lean();
+    
+    console.log(`📱 Found ${adminUsers.length} admin users`);
+    
+    if (adminUsers.length === 0) {
+      console.log('⚠️ No admin users found for WhatsApp notifications');
+      return;
+    }
+    
+    // Get admin user IDs
+    const adminUserIds = adminUsers.map(user => user._id);
+    
+    // Get WhatsApp configurations for these admin users
     const adminConfigs = await WhatsAppConfig.find({
+      user: { $in: adminUserIds },
       isActive: true,
+      phoneNumber: { $exists: true, $ne: null },
+      apiKey: { $exists: true, $ne: null },
       [`notifications.${notificationPrefKey}`]: true
-    }).populate('user', 'name email');
+    }).select('+apiKey').populate('user', 'name email role').lean();
+
+    console.log(`📱 Found ${adminConfigs.length} active WhatsApp configurations for admins`);
 
     if (adminConfigs.length === 0) {
       console.log('📱 No active WhatsApp configurations found for admins');
@@ -118,25 +144,28 @@ async function sendWhatsAppOrderNotification(order, notificationType, note = '')
 
     // Send notification to each admin
     const promises = adminConfigs.map(async (config) => {
-      if (config.phoneNumber && config.apiKey) {
-        try {
-          await whatsappService.sendOrderNotification(
-            {
-              phoneNumber: config.phoneNumber,
-              apiKey: config.apiKey
-            },
-            order,
-            notificationType,
-            note
-          );
-        } catch (error) {
-          console.error(`❌ Error sending WhatsApp to ${config.phoneNumber}:`, error.message);
-        }
+      try {
+        console.log(`📱 Sending WhatsApp to ${config.phoneNumber} for order ${order.orderNumber}`);
+        
+        const result = await whatsappService.sendOrderNotification(
+          {
+            phoneNumber: config.phoneNumber,
+            apiKey: config.apiKey
+          },
+          order,
+          notificationType,
+          note
+        );
+        
+        console.log(`✅ WhatsApp sent to ${config.phoneNumber}:`, result.success ? 'Success' : 'Failed');
+        
+      } catch (error) {
+        console.error(`❌ Error sending WhatsApp to ${config.phoneNumber}:`, error.message);
       }
     });
 
     await Promise.all(promises);
-    console.log(`📱 WhatsApp notifications sent for order ${order.orderNumber}`);
+    console.log(`📱 WhatsApp notifications completed for order ${order.orderNumber}`);
     
   } catch (error) {
     console.error('❌ Error in WhatsApp notification system:', error);
