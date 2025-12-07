@@ -70,7 +70,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// API documentation route
+// API documentation route - THIS SHOULD COME AFTER THE EXPRESS APP IS CREATED
 app.get('/api', (req, res) => {
   res.json({
     success: true,
@@ -85,7 +85,7 @@ app.get('/api', (req, res) => {
           login: 'POST /api/auth/login',
           register: 'POST /api/auth/register',
           profile: 'GET /api/auth/profile',
-          changePassword: 'PUT /api/auth/password'
+          updateProfile: 'PUT /api/auth/profile'
         }
       },
       products: {
@@ -93,52 +93,53 @@ app.get('/api', (req, res) => {
         endpoints: {
           getAll: 'GET /api/products',
           getSingle: 'GET /api/products/:id',
-          create: 'POST /api/products',
-          update: 'PUT /api/products/:id',
-          delete: 'DELETE /api/products/:id',
+          create: 'POST /api/products (Admin)',
+          update: 'PUT /api/products/:id (Admin)',
+          delete: 'DELETE /api/products/:id (Admin)',
           like: 'POST /api/products/:id/like',
           comment: 'POST /api/products/:id/comments',
-          restock: 'POST /api/products/:id/restock',
-          stockHistory: 'GET /api/products/:id/stock-history',
+          restock: 'POST /api/products/:id/restock (Admin)',
+          stockHistory: 'GET /api/products/:id/stock-history (Admin)',
           featured: 'GET /api/products/featured',
           byCategory: 'GET /api/products/category/:category',
           stats: 'GET /api/products/stats',
-          adminStats: 'GET /api/products/admin/stats',
-          performance: 'GET /api/products/:id/performance?period=week'
+          adminStats: 'GET /api/products/admin/stats (Admin)',
+          myProducts: 'GET /api/products/admin/my-products (Admin - filtered)',
+          performance: 'GET /api/products/:id/performance?period=week (Admin)',
+          topProductsAnalytics: 'GET /api/products/analytics/top-products (Admin)',
+          productTracking: 'GET /api/products/analytics/tracking (Admin)'
         }
       },
       sales: {
         base: '/api/sales',
         endpoints: {
-          getAll: 'GET /api/sales',
+          getAll: 'GET /api/sales (filtered by user)',
+          getAllForAdmin: 'GET /api/sales?view=my (Admin - own sales)',
           getSingle: 'GET /api/sales/:id',
           create: 'POST /api/sales',
-          update: 'PUT /api/sales/:id',
-          delete: 'DELETE /api/sales/:id',
           updatePayment: 'PUT /api/sales/:id/payment',
-          cancel: 'PUT /api/sales/:id/cancel',
-          resume: 'PUT /api/sales/:id/resume',
-          stats: 'GET /api/sales/stats',
-          analytics: 'GET /api/sales/analytics'
+          cancel: 'PUT /api/sales/:id/cancel (Admin)',
+          resume: 'PUT /api/sales/:id/resume (Admin)',
+          delete: 'DELETE /api/sales/:id (Admin)',
+          stats: 'GET /api/sales/stats (filtered by user)'
         }
       },
       orders: {
         base: '/api/orders',
         endpoints: {
-          getAll: 'GET /api/orders (Admin only)',
+          getAll: 'GET /api/orders (Admin only - all orders)',
+          myOrders: 'GET /api/orders/my-orders (User own orders)',
+          adminMyOrders: 'GET /api/orders/admin/my-orders (Admin - own processed orders)',
           getSingle: 'GET /api/orders/:id',
           create: 'POST /api/orders',
-          update: 'PUT /api/orders/:id',
-          delete: 'DELETE /api/orders/:id',
-          updateStatus: 'PUT /api/orders/:id/status (Admin only)',
+          updateStatus: 'PUT /api/orders/:id/status (Admin)',
           cancel: 'PUT /api/orders/:id/cancel',
-          process: 'PUT /api/orders/:id/process (Admin only)',
-          deliver: 'PUT /api/orders/:id/deliver (Admin only)',
-          reject: 'PUT /api/orders/:id/reject (Admin only)',
+          process: 'PUT /api/orders/:id/process (Admin)',
+          deliver: 'PUT /api/orders/:id/deliver (Admin)',
+          reject: 'PUT /api/orders/:id/reject (Admin)',
           confirmDelivery: 'PUT /api/orders/:id/confirm-delivery',
-          myOrders: 'GET /api/orders/my-orders',
-          stats: 'GET /api/orders/stats (Admin only)',
-          dashboardStats: 'GET /api/orders/dashboard/stats (Admin only)'
+          stats: 'GET /api/orders/stats (Admin - filtered by processor)',
+          dashboardStats: 'GET /api/orders/dashboard/stats (Admin - filtered by processor)'
         }
       },
       notifications: {
@@ -153,20 +154,11 @@ app.get('/api', (req, res) => {
           unreadCount: 'GET /api/notifications/unread-count'
         }
       },
-      // cart: { // COMMENT OUT FOR NOW
-      //   base: '/api/cart',
-      //   endpoints: {
-      //     getCart: 'GET /api/cart',
-      //     addToCart: 'POST /api/cart',
-      //     updateCartItem: 'PUT /api/cart/:productId',
-      //     removeFromCart: 'DELETE /api/cart/:productId',
-      //     clearCart: 'DELETE /api/cart'
-      //   }
-      // },
       admin: {
         base: '/api/admin',
         endpoints: {
-          dashboard: 'GET /api/admin/dashboard',
+          dashboard: 'GET /api/admin/dashboard (Admin - all data)',
+          myDashboard: 'GET /api/admin/my-dashboard (Admin - own data)',
           users: 'GET /api/admin/users',
           createAdmin: 'POST /api/admin/create-admin (Unprotected for setup)',
           updateUserRole: 'PUT /api/admin/users/:id/role',
@@ -176,20 +168,30 @@ app.get('/api', (req, res) => {
       analytics: {
         base: '/api/analytics',
         endpoints: {
-          salesOverview: 'GET /api/analytics/sales/overview',
-          productAnalytics: 'GET /api/analytics/products',
-          inventoryAnalytics: 'GET /api/analytics/inventory',
-          performanceMetrics: 'GET /api/analytics/performance',
-          dailyPerformance: 'GET /api/analytics/daily-performance',
-          productTracking: 'GET /api/analytics/product-tracking'
+          // System-wide analytics (Admin sees all)
+          salesOverview: 'GET /api/analytics/sales/overview (Admin)',
+          productAnalytics: 'GET /api/analytics/products (Admin)',
+          inventoryAnalytics: 'GET /api/analytics/inventory (Admin)',
+          performanceMetrics: 'GET /api/analytics/performance (Admin)',
+          dailyPerformance: 'GET /api/analytics/daily-performance (Admin)',
+          productTracking: 'GET /api/analytics/product-tracking (Admin)',
+          // Admin-specific analytics (own data only)
+          adminSalesOverview: 'GET /api/analytics/admin/sales-overview (Admin - own sales)',
+          adminProductAnalytics: 'GET /api/analytics/admin/product-analytics (Admin - own products)',
+          adminPerformance: 'GET /api/analytics/admin/performance (Admin - own performance)'
         }
       },
       dashboard: {
         base: '/api/dashboard',
         endpoints: {
-          overview: 'GET /api/dashboard/overview',
-          quickStats: 'GET /api/dashboard/quick-stats',
-          recentActivity: 'GET /api/dashboard/recent-activity'
+          // User dashboard (own data)
+          overview: 'GET /api/dashboard/overview (User own data)',
+          quickStats: 'GET /api/dashboard/quick-stats (User own data)',
+          recentActivity: 'GET /api/dashboard/recent-activity (User own data)',
+          // Admin dashboard (own data)
+          adminOverview: 'GET /api/dashboard/admin/overview (Admin own data)',
+          adminQuickStats: 'GET /api/dashboard/admin/quick-stats (Admin own data)',
+          adminRecentActivity: 'GET /api/dashboard/admin/recent-activity (Admin own data)'
         }
       },
       health: {
@@ -197,6 +199,21 @@ app.get('/api', (req, res) => {
         endpoints: {
           check: 'GET /api/health'
         }
+      }
+    },
+    filtering: {
+      note: 'Data filtering is automatic based on user role',
+      regularUsers: 'Always see only their own data',
+      admins: {
+        default: 'See all data (unfiltered)',
+        viewOwnData: 'Add ?view=my query parameter OR use /admin/my-* routes',
+        examples: [
+          '/api/sales?view=my',
+          '/api/products/admin/my-products',
+          '/api/orders/admin/my-orders',
+          '/api/analytics/admin/sales-overview',
+          '/api/dashboard/admin/overview'
+        ]
       }
     }
   });

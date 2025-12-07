@@ -14,42 +14,31 @@ const {
   confirmDelivery
 } = require('../controllers/orders');
 const { protect, authorize } = require('../middleware/auth');
+const filterByUser = require('../middleware/filterByUser');
 
 const router = express.Router();
 
-router.route('/')
-  .post(protect, createOrder)
-  .get(protect, authorize('admin'), getAllOrders);
+// User routes
+router.post('/', protect, createOrder);
+router.get('/my-orders', protect, getMyOrders);
+router.get('/:id', protect, getOrder);
+router.put('/:id/cancel', protect, cancelOrder);
+router.put('/:id/confirm-delivery', protect, confirmDelivery);
 
-router.route('/my-orders')
-  .get(protect, getMyOrders);
+// Admin routes - all orders (unfiltered)
+router.get('/', protect, authorize('admin'), getAllOrders);
 
-router.route('/stats')
-  .get(protect, authorize('admin'), getOrderStats);
+// Admin routes - their own processed orders
+router.get('/admin/my-orders', protect, authorize('admin'), filterByUser('processedBy'), getAllOrders);
 
-router.route('/dashboard/stats')
-  .get(protect, authorize('admin'), getDashboardStats);
+// Stats - filtered by processor
+router.get('/stats', protect, authorize('admin'), filterByUser('processedBy'), getOrderStats);
+router.get('/dashboard/stats', protect, authorize('admin'), filterByUser('processedBy'), getDashboardStats);
 
-router.route('/:id')
-  .get(protect, getOrder);
-
-router.route('/:id/status')
-  .put(protect, authorize('admin'), updateOrderStatus);
-
-router.route('/:id/cancel')
-  .put(protect, cancelOrder);
-
-// New routes for order workflow
-router.route('/:id/process')
-  .put(protect, authorize('admin'), processOrder);
-
-router.route('/:id/deliver')
-  .put(protect, authorize('admin'), deliverOrder);
-
-router.route('/:id/reject')
-  .put(protect, authorize('admin'), rejectOrder);
-
-router.route('/:id/confirm-delivery')
-  .put(protect, confirmDelivery);
+// Order management
+router.put('/:id/status', protect, authorize('admin'), updateOrderStatus);
+router.put('/:id/process', protect, authorize('admin'), processOrder);
+router.put('/:id/deliver', protect, authorize('admin'), deliverOrder);
+router.put('/:id/reject', protect, authorize('admin'), rejectOrder);
 
 module.exports = router;

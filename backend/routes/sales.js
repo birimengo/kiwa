@@ -6,23 +6,24 @@ const {
   updatePayment,
   cancelSale,
   getSalesStats,
-  deleteSale,        // ADD THIS
-  resumeSale         // ADD THIS
+  deleteSale,
+  resumeSale
 } = require('../controllers/sales');
 const { protect, authorize } = require('../middleware/auth');
+const filterByUser = require('../middleware/filterByUser');
 
 const router = express.Router();
 
 router.route('/')
   .post(protect, createSale)
-  .get(protect, getSales);
+  .get(protect, filterByUser('soldBy'), getSales);
 
 router.route('/stats')
-  .get(protect, getSalesStats);
+  .get(protect, filterByUser('soldBy'), getSalesStats);
 
 router.route('/:id')
   .get(protect, getSale)
-  .delete(protect, authorize('admin'), deleteSale); // ADD DELETE ROUTE
+  .delete(protect, authorize('admin'), deleteSale);
 
 router.route('/:id/payment')
   .put(protect, updatePayment);
@@ -31,6 +32,6 @@ router.route('/:id/cancel')
   .put(protect, authorize('admin'), cancelSale);
 
 router.route('/:id/resume')
-  .put(protect, authorize('admin'), resumeSale); // ADD RESUME ROUTE
+  .put(protect, authorize('admin'), resumeSale);
 
 module.exports = router;
