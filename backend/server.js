@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const path = require('path');
 
 // Load env vars
 dotenv.config();
@@ -16,12 +17,15 @@ app.use(cors({
   origin: true, // Allow all origins in production and development
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
 }));
 
 // Body parser middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Serve static files from public directory (for admin registration page)
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Import all route files
 const authRoutes = require('./routes/auth');
@@ -45,17 +49,32 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/notifications', notificationRoutes);
 // app.use('/api/cart', cartRoutes); // COMMENT OUT FOR NOW
 
+// Admin Registration Page (if hosted on same server)
+app.get('/admin/register', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-registration.html'));
+});
+
+// Login Page (for convenience)
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
 // Health check route
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
-    message: 'Server is running and accessible from all devices',
+    message: 'Electronics Store Management System is running and accessible from all devices',
     timestamp: new Date().toISOString(),
     database: 'Connected to MongoDB Atlas',
     environment: process.env.NODE_ENV,
-    version: '1.0.0',
+    version: '2.0.0',
     cors: 'All origins allowed',
     clientOrigin: req.headers.origin || 'No origin header',
+    adminFeatures: {
+      registration: 'Available at /admin/register',
+      apiEndpoint: 'POST /api/admin/register',
+      description: 'Complete admin registration and management system'
+    },
     endpoints: [
       '/api/auth',
       '/api/products', 
@@ -70,14 +89,19 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// API documentation route - THIS SHOULD COME AFTER THE EXPRESS APP IS CREATED
+// API documentation route
 app.get('/api', (req, res) => {
   res.json({
     success: true,
-    message: 'Electronics Store API - Accessible from all devices',
-    version: '1.0.0',
+    message: 'Electronics Store Management System API - Accessible from all devices',
+    version: '2.0.0',
     timestamp: new Date().toISOString(),
-    documentation: 'All API endpoints are protected except /api/health',
+    adminRegistration: {
+      webInterface: '/admin/register',
+      apiEndpoint: 'POST /api/admin/register (Admin auth required)',
+      description: 'Existing admins can create new admin accounts'
+    },
+    documentation: 'All API endpoints are protected except /api/health and /api/admin/create-admin',
     endpoints: {
       auth: {
         base: '/api/auth',
@@ -157,12 +181,27 @@ app.get('/api', (req, res) => {
       admin: {
         base: '/api/admin',
         endpoints: {
+          // Dashboard & Analytics
           dashboard: 'GET /api/admin/dashboard (Admin - all data)',
           myDashboard: 'GET /api/admin/my-dashboard (Admin - own data)',
-          users: 'GET /api/admin/users',
-          createAdmin: 'POST /api/admin/create-admin (Unprotected for setup)',
+          
+          // User Management
+          users: 'GET /api/admin/users (All users)',
+          userById: 'GET /api/admin/users/:id (Get specific user)',
           updateUserRole: 'PUT /api/admin/users/:id/role',
-          toggleUserStatus: 'PUT /api/admin/users/:id/status'
+          toggleUserStatus: 'PUT /api/admin/users/:id/status',
+          deleteUser: 'DELETE /api/admin/users/:id (Soft delete)',
+          
+          // Admin Management
+          admins: 'GET /api/admin/admins (All admin users)',
+          createAdmin: 'POST /api/admin/create-admin (Unprotected for initial setup)',
+          registerAdmin: 'POST /api/admin/register (Create new admin - requires admin auth)',
+          
+          // Admin-specific filtered views
+          myProducts: 'GET /api/admin/my-products (Admin - own products)',
+          mySales: 'GET /api/admin/my-sales (Admin - own sales)',
+          myOrders: 'GET /api/admin/my-orders (Admin - own processed orders)',
+          myAnalytics: 'GET /api/admin/my-analytics (Admin - own analytics)'
         }
       },
       analytics: {
@@ -215,6 +254,19 @@ app.get('/api', (req, res) => {
           '/api/dashboard/admin/overview'
         ]
       }
+    },
+    adminRegistrationInstructions: {
+      step1: 'Login as existing admin at /api/auth/login',
+      step2: 'Copy the JWT token from response',
+      step3: 'Use the token to access /admin/register page',
+      step4: 'Configure server URL and token, then create new admins',
+      alternative: 'Or use API directly: POST /api/admin/register with admin auth token'
+    },
+    security: {
+      note: 'Admin endpoints require JWT authentication with admin role',
+      tokenLifetime: '30 days (configurable in .env)',
+      passwordRequirements: 'Minimum 8 characters for admin accounts',
+      validation: 'Email format validation and duplicate email checking'
     }
   });
 });
@@ -237,7 +289,16 @@ app.use((req, res, next) => {
       '/api/orders',
       '/api/notifications',
       // '/api/cart' // COMMENT OUT FOR NOW
-    ]
+    ],
+    pages: [
+      '/admin/register - Admin registration page',
+      '/login - Login page'
+    ],
+    quickStart: {
+      adminSetup: 'POST /api/admin/create-admin',
+      adminLogin: 'POST /api/auth/login',
+      adminRegistration: 'GET /admin/register'
+    }
   });
 });
 
@@ -249,7 +310,8 @@ app.use((error, req, res, next) => {
     method: req.method,
     url: req.originalUrl,
     ip: req.ip,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    userId: req.user ? req.user._id : 'Unauthenticated'
   });
   
   // Mongoose validation error
@@ -300,6 +362,16 @@ app.use((error, req, res, next) => {
     });
   }
   
+  // CORS errors
+  if (error.name === 'CorsError') {
+    return res.status(403).json({
+      success: false,
+      message: 'CORS policy: Origin not allowed',
+      timestamp: new Date().toISOString(),
+      allowedOrigins: 'All origins are allowed'
+    });
+  }
+  
   // Default error
   res.status(error.statusCode || 500).json({
     success: false,
@@ -318,21 +390,115 @@ app.use((error, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌐 MongoDB: Connected to Atlas cluster`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`✅ CORS: All origins allowed (all devices can access)`);
-  console.log(`📊 Available API endpoints:`);
-  console.log(`   • http://localhost:${PORT}/api`);
-  console.log(`   • http://localhost:${PORT}/api/health`);
-  console.log(`   • http://localhost:${PORT}/api/auth`);
-  console.log(`   • http://localhost:${PORT}/api/products`);
-  console.log(`   • http://localhost:${PORT}/api/sales`);
-  console.log(`   • http://localhost:${PORT}/api/admin`);
-  console.log(`   • http://localhost:${PORT}/api/analytics`);
-  console.log(`   • http://localhost:${PORT}/api/dashboard`);
-  console.log(`   • http://localhost:${PORT}/api/orders`);
-  console.log(`   • http://localhost:${PORT}/api/notifications`);
-  // console.log(`   • http://localhost:${PORT}/api/cart`); // COMMENT OUT FOR NOW
+  console.log(`
+  ╔══════════════════════════════════════════════════════════════════╗
+  ║                    ELECTRONICS STORE MANAGEMENT                  ║
+  ║                         SYSTEM v2.0.0                            ║
+  ╚══════════════════════════════════════════════════════════════════╝
+  
+  🚀 Server running on port ${PORT}
+  🌐 MongoDB: Connected to Atlas cluster
+  🌍 Environment: ${process.env.NODE_ENV || 'development'}
+  ✅ CORS: All origins allowed (all devices can access)
+  
+  📊 AVAILABLE ENDPOINTS:
+  ═══════════════════════════════════════════════════════════════════
+     🔗 Health Check:    http://localhost:${PORT}/api/health
+     📖 API Docs:        http://localhost:${PORT}/api
+     🔐 Authentication:  http://localhost:${PORT}/api/auth
+     📦 Products:        http://localhost:${PORT}/api/products
+     💰 Sales:           http://localhost:${PORT}/api/sales
+     👑 Admin:           http://localhost:${PORT}/api/admin
+     📈 Analytics:       http://localhost:${PORT}/api/analytics
+     📊 Dashboard:       http://localhost:${PORT}/api/dashboard
+     📦 Orders:          http://localhost:${PORT}/api/orders
+     🔔 Notifications:   http://localhost:${PORT}/api/notifications
+  
+  👑 ADMIN REGISTRATION SYSTEM:
+  ═══════════════════════════════════════════════════════════════════
+     🔐 Login Page:      http://localhost:${PORT}/login
+     👑 Admin Register:  http://localhost:${PORT}/admin/register
+  
+  🎯 QUICK START - ADMIN REGISTRATION FLOW:
+  ═══════════════════════════════════════════════════════════════════
+     1️⃣ Create First Admin (if not exists):
+        POST http://localhost:${PORT}/api/admin/create-admin
+        Body: {"name":"System Admin","email":"admin@electronics.com","password":"admin123"}
+     
+     2️⃣ Login as Admin:
+        POST http://localhost:${PORT}/api/auth/login
+        Body: {"email":"admin@electronics.com","password":"admin123"}
+     
+     3️⃣ Copy JWT token from response
+     
+     4️⃣ Access Admin Registration Page:
+        http://localhost:${PORT}/admin/register
+     
+     5️⃣ Configure:
+        - Server URL: http://localhost:${PORT}
+        - Bearer Token: (paste your JWT token)
+        - Click "Test Connection"
+     
+     6️⃣ Create New Admin Accounts
+        - Fill admin details
+        - Click "Create Admin Account"
+  
+  🔧 API TESTING WITH CURL:
+  ═══════════════════════════════════════════════════════════════════
+     # Create first admin
+     curl -X POST http://localhost:${PORT}/api/admin/create-admin \\
+          -H "Content-Type: application/json" \\
+          -d '{"name":"System Admin","email":"admin@electronics.com","password":"admin123"}'
+     
+     # Login and get token
+     curl -X POST http://localhost:${PORT}/api/auth/login \\
+          -H "Content-Type: application/json" \\
+          -d '{"email":"admin@electronics.com","password":"admin123"}'
+     
+     # Create new admin (using token)
+     curl -X POST http://localhost:${PORT}/api/admin/register \\
+          -H "Content-Type: application/json" \\
+          -H "Authorization: Bearer YOUR_TOKEN_HERE" \\
+          -d '{"name":"New Admin","email":"newadmin@example.com","password":"SecurePass123!"}'
+     
+     # List all admins
+     curl -X GET http://localhost:${PORT}/api/admin/admins \\
+          -H "Authorization: Bearer YOUR_TOKEN_HERE"
+  
+  📝 ADMIN MANAGEMENT FEATURES:
+  ═══════════════════════════════════════════════════════════════════
+     ✅ Create new admin accounts
+     ✅ List all admin users
+     ✅ Update user roles
+     ✅ Activate/deactivate users
+     ✅ Soft delete users
+     ✅ Admin-specific dashboard views
+     ✅ Filtered data views for admins
+     ✅ Comprehensive error handling
+     ✅ Input validation and sanitization
+  
+  🛡️ SECURITY FEATURES:
+  ═══════════════════════════════════════════════════════════════════
+     ✅ JWT authentication
+     ✅ Role-based access control
+     ✅ Password validation (min 8 chars)
+     ✅ Email format validation
+     ✅ Duplicate email prevention
+     ✅ Self-modification prevention
+     ✅ Input sanitization
+     ✅ CORS protection
+  
+  📱 COMPATIBILITY:
+  ═══════════════════════════════════════════════════════════════════
+     ✅ Web browsers
+     ✅ Mobile apps
+     ✅ Desktop applications
+     ✅ API clients
+     ✅ Cross-origin requests
+     ✅ Separate hosting support
+  
+  ═══════════════════════════════════════════════════════════════════
+  System ready! Access any endpoint from any device or location.
+  ═══════════════════════════════════════════════════════════════════
+  `);
 });
