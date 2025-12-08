@@ -2,15 +2,74 @@ const Product = require('../models/Product');
 const mongoose = require('mongoose');
 const Sale = require('../models/Sale');
 
+// Helper function to add user filter to query
+const addUserFilterToQuery = (req, query, fieldName = 'createdBy') => {
+  // If createdBy is in query (added by filterByUser middleware), use it
+  if (req.query[fieldName]) {
+    query[fieldName] = req.query[fieldName];
+    console.log(`🔍 [Products] Filtering by ${fieldName} from query: ${req.query[fieldName]}`);
+  } 
+  // For admin-specific personal endpoints OR when view=my is specified
+  else if (req.user && req.user._id) {
+    // Check if this is an admin personal view
+    const isAdminPersonalView = (
+      req.path.includes('/admin/') || 
+      req.query.view === 'my' || 
+      req.query.createdBy === 'me'
+    );
+    
+    if (isAdminPersonalView || req.user.role !== 'admin') {
+      // Non-admin users or admin in personal view: always filter by their ID
+      query[fieldName] = req.user._id;
+      console.log(`🔍 [Products] Filtering by ${fieldName} from user: ${req.user._id} (${req.user.role} ${isAdminPersonalView ? 'personal view' : 'regular user'})`);
+    } else {
+      console.log(`🔍 [Products] [ADMIN SYSTEM VIEW] No user filter applied for ${fieldName}`);
+    }
+  }
+  return query;
+};
+
+// Helper function to get user filter based on context
+const getUserFilterForContext = (req, context = 'products') => {
+  const fieldMap = {
+    'products': 'createdBy',
+    'product-stats': 'createdBy',
+    'product-performance': 'createdBy',
+    'product-sales': 'soldBy'
+  };
+  
+  const fieldName = fieldMap[context];
+  const filter = {};
+  
+  if (req.query[fieldName]) {
+    filter[fieldName] = req.query[fieldName];
+  } else if (req.user && req.user._id && (req.user.role !== 'admin' || req.path.includes('/admin/') || req.query.view === 'my')) {
+    // Always filter for non-admins OR admins in personal view
+    filter[fieldName] = req.user._id;
+  }
+  
+  return filter;
+};
+
 // @desc    Get all products with filtering, sorting, and pagination
 // @route   GET /api/products
 // @access  Public
 exports.getProducts = async (req, res) => {
   try {
     console.log('📦 Starting products fetch...');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
     // Filtering
     let query = { isActive: true };
+    
+    // For admin personal view or regular users, filter by creator
+    if (req.user && req.user._id) {
+      const isAdminPersonalView = req.path.includes('/admin/') || req.query.view === 'my';
+      if (req.user.role !== 'admin' || isAdminPersonalView) {
+        query.createdBy = req.user._id;
+        console.log(`🔍 Filtering products by creator: ${req.user._id}`);
+      }
+    }
     
     // Search functionality using text index
     if (req.query.search && req.query.search.trim() !== '') {
@@ -64,15 +123,17 @@ exports.getProducts = async (req, res) => {
     const limit = parseInt(req.query.limit) || 12;
     const skip = (page - 1) * limit;
 
-    console.log(`🔍 Query:`, { 
+    console.log(`🔍 Products Query:`, { 
       page, limit, skip, 
       search: req.query.search,
-      category: req.query.category 
+      category: req.query.category,
+      createdBy: query.createdBy ? 'Filtered by creator' : 'No filter (admin system view)'
     });
 
     // OPTIMIZED QUERY: Select only essential fields and remove heavy population
     const products = await Product.find(query)
-      .select('name brand sellingPrice purchasePrice category stock images description averageRating totalReviews featured createdAt totalSold lowStockAlert')
+      .select('name brand sellingPrice purchasePrice category stock images description averageRating totalReviews featured createdAt totalSold lowStockAlert createdBy')
+      .populate('createdBy', 'name email')
       .sort(sort)
       .skip(skip)
       .limit(limit)
@@ -101,7 +162,12 @@ exports.getProducts = async (req, res) => {
         nextPage: hasNextPage ? page + 1 : null,
         prevPage: hasPrevPage ? page - 1 : null
       },
-      products
+      products,
+      filterInfo: {
+        isFiltered: !!query.createdBy,
+        userId: query.createdBy || null,
+        viewType: query.createdBy ? 'personal' : 'system'
+      }
     });
   } catch (error) {
     console.error('❌ Get products error:', error);
@@ -119,6 +185,7 @@ exports.getProducts = async (req, res) => {
 exports.getProduct = async (req, res) => {
   try {
     console.log('📦 Fetching single product:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
     // Validate product ID
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -130,7 +197,8 @@ exports.getProduct = async (req, res) => {
 
     const product = await Product.findById(req.params.id)
       .populate('comments.user', 'name avatar')
-      .populate('likes', 'name avatar');
+      .populate('likes', 'name avatar')
+      .populate('createdBy', 'name email');
 
     if (!product) {
       return res.status(404).json({
@@ -147,11 +215,23 @@ exports.getProduct = async (req, res) => {
       });
     }
 
+    // Check if user has permission to view this product
+    if (req.user && req.user.role !== 'admin' && product.createdBy._id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view this product'
+      });
+    }
+
     console.log(`✅ Successfully fetched product: ${product.name}`);
 
     res.json({
       success: true,
-      product
+      product,
+      permissionInfo: {
+        canEdit: req.user && (req.user.role === 'admin' || product.createdBy._id.toString() === req.user._id.toString()),
+        isOwner: req.user && product.createdBy._id.toString() === req.user._id.toString()
+      }
     });
   } catch (error) {
     console.error('❌ Get product error:', error);
@@ -169,6 +249,7 @@ exports.getProduct = async (req, res) => {
 exports.createProduct = async (req, res) => {
   try {
     console.log('🆕 Creating new product...');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
     // Validate required fields
     const { name, brand, sellingPrice, category, description } = req.body;
@@ -211,9 +292,9 @@ exports.createProduct = async (req, res) => {
     });
 
     // Populate the created product
-    await product.populate('createdBy', 'name');
+    await product.populate('createdBy', 'name email');
 
-    console.log(`✅ Product created successfully: ${product.name}`);
+    console.log(`✅ Product created successfully: ${product.name} by ${req.user.name}`);
 
     res.status(201).json({
       success: true,
@@ -255,6 +336,7 @@ exports.createProduct = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     console.log('✏️ Updating product:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
     // Validate product ID
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -264,12 +346,20 @@ exports.updateProduct = async (req, res) => {
       });
     }
 
-    let product = await Product.findById(req.params.id);
+    let product = await Product.findById(req.params.id).populate('createdBy', 'name email');
 
     if (!product) {
       return res.status(404).json({
         success: false,
         message: 'Product not found'
+      });
+    }
+
+    // Check if user has permission to update this product
+    if (req.user.role !== 'admin' && product.createdBy._id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to update this product'
       });
     }
 
@@ -307,15 +397,19 @@ exports.updateProduct = async (req, res) => {
       }
     ).populate('comments.user', 'name avatar')
      .populate('likes', 'name avatar')
-     .populate('createdBy', 'name')
-     .populate('updatedBy', 'name');
+     .populate('createdBy', 'name email')
+     .populate('updatedBy', 'name email');
 
-    console.log(`✅ Product updated successfully: ${product.name}`);
+    console.log(`✅ Product updated successfully: ${product.name} by ${req.user.name}`);
 
     res.json({
       success: true,
       message: 'Product updated successfully',
-      product
+      product,
+      permissionInfo: {
+        updatedByUser: req.user.name,
+        isOwner: product.createdBy._id.toString() === req.user._id.toString()
+      }
     });
   } catch (error) {
     console.error('❌ Update product error:', error);
@@ -352,6 +446,7 @@ exports.updateProduct = async (req, res) => {
 exports.deleteProduct = async (req, res) => {
   try {
     console.log('🗑️ Deleting product:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
     // Validate product ID
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -361,7 +456,7 @@ exports.deleteProduct = async (req, res) => {
       });
     }
 
-    const product = await Product.findById(req.params.id);
+    const product = await Product.findById(req.params.id).populate('createdBy', 'name email');
 
     if (!product) {
       return res.status(404).json({
@@ -370,16 +465,26 @@ exports.deleteProduct = async (req, res) => {
       });
     }
 
+    // Check if user has permission to delete this product
+    if (req.user.role !== 'admin' && product.createdBy._id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to delete this product'
+      });
+    }
+
     // Soft delete by setting isActive to false
     product.isActive = false;
     product.updatedBy = req.user.id;
     await product.save();
 
-    console.log(`✅ Product deleted successfully: ${product.name}`);
+    console.log(`✅ Product deleted successfully: ${product.name} by ${req.user.name}`);
 
     res.json({
       success: true,
-      message: 'Product deleted successfully'
+      message: 'Product deleted successfully',
+      deletedBy: req.user.name,
+      productName: product.name
     });
   } catch (error) {
     console.error('❌ Delete product error:', error);
@@ -396,6 +501,9 @@ exports.deleteProduct = async (req, res) => {
 // @access  Private
 exports.likeProduct = async (req, res) => {
   try {
+    console.log('❤️ Like/Unlike product:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     // Validate product ID
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({
@@ -435,6 +543,7 @@ exports.likeProduct = async (req, res) => {
       isLiked: !isLiked, // Return the new state
       product: {
         _id: product._id,
+        name: product.name,
         likes: product.likes
       }
     });
@@ -453,6 +562,9 @@ exports.likeProduct = async (req, res) => {
 // @access  Private
 exports.addComment = async (req, res) => {
   try {
+    console.log('💬 Adding comment to product:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     // Validate product ID
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({
@@ -547,23 +659,41 @@ exports.addComment = async (req, res) => {
 exports.getFeaturedProducts = async (req, res) => {
   try {
     console.log('⭐ Fetching featured products...');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
-    const featuredProducts = await Product.find({ 
+    let query = { 
       featured: true, 
       isActive: true,
       stock: { $gt: 0 } // Only products in stock
-    })
-    .select('name brand sellingPrice category stock images description averageRating totalSold')
-    .sort({ createdAt: -1 })
-    .limit(8)
-    .lean(); // Remove population for better performance
+    };
+    
+    // For admin personal view or regular users, filter by creator
+    if (req.user && req.user._id) {
+      const isAdminPersonalView = req.path.includes('/admin/') || req.query.view === 'my';
+      if (req.user.role !== 'admin' || isAdminPersonalView) {
+        query.createdBy = req.user._id;
+        console.log(`🔍 Filtering featured products by creator: ${req.user._id}`);
+      }
+    }
+
+    const featuredProducts = await Product.find(query)
+      .select('name brand sellingPrice category stock images description averageRating totalSold createdBy')
+      .populate('createdBy', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(8)
+      .lean(); // Remove population for better performance
 
     console.log(`✅ Found ${featuredProducts.length} featured products`);
 
     res.json({
       success: true,
       count: featuredProducts.length,
-      products: featuredProducts
+      products: featuredProducts,
+      filterInfo: {
+        isFiltered: !!query.createdBy,
+        userId: query.createdBy || null,
+        viewType: query.createdBy ? 'personal' : 'system'
+      }
     });
   } catch (error) {
     console.error('❌ Get featured products error:', error);
@@ -581,6 +711,7 @@ exports.getFeaturedProducts = async (req, res) => {
 exports.getProductsByCategory = async (req, res) => {
   try {
     const { category } = req.params;
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
     if (!category) {
       return res.status(400).json({
@@ -591,14 +722,26 @@ exports.getProductsByCategory = async (req, res) => {
 
     console.log(`📂 Fetching products by category: ${category}`);
 
-    const products = await Product.find({ 
+    let query = { 
       category: { $regex: new RegExp(category, 'i') },
       isActive: true 
-    })
-    .select('name brand sellingPrice category stock images description averageRating totalSold')
-    .sort({ createdAt: -1 })
-    .limit(50) // Add limit for category pages
-    .lean(); // Remove population for better performance
+    };
+    
+    // For admin personal view or regular users, filter by creator
+    if (req.user && req.user._id) {
+      const isAdminPersonalView = req.path.includes('/admin/') || req.query.view === 'my';
+      if (req.user.role !== 'admin' || isAdminPersonalView) {
+        query.createdBy = req.user._id;
+        console.log(`🔍 Filtering category products by creator: ${req.user._id}`);
+      }
+    }
+
+    const products = await Product.find(query)
+      .select('name brand sellingPrice category stock images description averageRating totalSold createdBy')
+      .populate('createdBy', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(50) // Add limit for category pages
+      .lean(); // Remove population for better performance
 
     console.log(`✅ Found ${products.length} products in category: ${category}`);
 
@@ -606,7 +749,12 @@ exports.getProductsByCategory = async (req, res) => {
       success: true,
       count: products.length,
       category,
-      products
+      products,
+      filterInfo: {
+        isFiltered: !!query.createdBy,
+        userId: query.createdBy || null,
+        viewType: query.createdBy ? 'personal' : 'system'
+      }
     });
   } catch (error) {
     console.error('❌ Get products by category error:', error);
@@ -624,15 +772,29 @@ exports.getProductsByCategory = async (req, res) => {
 exports.getProductStats = async (req, res) => {
   try {
     console.log('📊 Fetching product statistics...');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+
+    // Build query with proper user filtering
+    let query = { isActive: true };
     
-    const totalProducts = await Product.countDocuments();
-    const activeProducts = await Product.countDocuments({ isActive: true });
-    const outOfStockProducts = await Product.countDocuments({ stock: 0, isActive: true });
-    const featuredProducts = await Product.countDocuments({ featured: true, isActive: true });
+    // Add user filter if present
+    const userFilter = getUserFilterForContext(req, 'product-stats');
+    if (userFilter.createdBy) {
+      query.createdBy = userFilter.createdBy;
+    }
+
+    console.log(`🔍 Product Stats Query:`, { 
+      createdBy: query.createdBy ? 'Filtered by creator' : 'No filter (admin system view)'
+    });
+
+    const totalProducts = await Product.countDocuments(query);
+    const activeProducts = await Product.countDocuments({ ...query, isActive: true });
+    const outOfStockProducts = await Product.countDocuments({ ...query, stock: 0 });
+    const featuredProducts = await Product.countDocuments({ ...query, featured: true });
     
     // Enhanced product statistics with inventory values
     const inventoryStats = await Product.aggregate([
-      { $match: { isActive: true } },
+      { $match: query },
       { 
         $group: { 
           _id: null,
@@ -670,9 +832,9 @@ exports.getProductStats = async (req, res) => {
       }
     ]);
 
-    // Get products by category
+    // Get products by category with user filter
     const categoryStats = await Product.aggregate([
-      { $match: { isActive: true } },
+      { $match: query },
       { $group: { 
         _id: '$category', 
         count: { $sum: 1 },
@@ -704,6 +866,11 @@ exports.getProductStats = async (req, res) => {
         activeProducts,
         featuredProducts,
         categoryStats
+      },
+      filterInfo: {
+        isFiltered: !!query.createdBy,
+        userId: query.createdBy || null,
+        viewType: query.createdBy ? 'personal' : 'system'
       }
     });
   } catch (error) {
@@ -724,6 +891,9 @@ exports.restockProduct = async (req, res) => {
   session.startTransaction();
 
   try {
+    console.log('📦 Restocking product:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     const { quantity, notes = '' } = req.body;
 
     if (!quantity || quantity <= 0) {
@@ -743,6 +913,16 @@ exports.restockProduct = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Product not found'
+      });
+    }
+
+    // Check if user has permission to restock this product
+    if (req.user.role !== 'admin' && product.createdBy.toString() !== req.user._id.toString()) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to restock this product'
       });
     }
 
@@ -776,6 +956,8 @@ exports.restockProduct = async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
+    console.log(`✅ Product restocked: ${product.name} by ${req.user.name}`);
+
     res.json({
       success: true,
       message: 'Product restocked successfully',
@@ -786,7 +968,8 @@ exports.restockProduct = async (req, res) => {
         newStock: product.stock,
         restockedQuantity: product.restockedQuantity,
         stockHistory: product.stockHistory.slice(-1)
-      }
+      },
+      restockedBy: req.user.name
     });
 
   } catch (error) {
@@ -807,16 +990,28 @@ exports.restockProduct = async (req, res) => {
 // @access  Private/Admin
 exports.getStockHistory = async (req, res) => {
   try {
+    console.log('📊 Fetching product stock history:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     const product = await Product.findById(req.params.id)
-      .select('stockHistory name stock originalQuantity restockedQuantity')
-      .populate('stockHistory.user', 'name')
+      .select('stockHistory name stock originalQuantity restockedQuantity createdBy')
+      .populate('stockHistory.user', 'name email')
       .populate('stockHistory.reference', 'saleNumber')
-      .sort({ 'stockHistory.createdAt': -1 });
+      .populate('createdBy', 'name email')
+      .sort({ 'stockHistory.date': -1 });
 
     if (!product) {
       return res.status(404).json({
         success: false,
         message: 'Product not found'
+      });
+    }
+
+    // Check if user has permission to view stock history
+    if (req.user.role !== 'admin' && product.createdBy._id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view stock history for this product'
       });
     }
 
@@ -826,7 +1021,8 @@ exports.getStockHistory = async (req, res) => {
       currentStock: product.stock,
       originalQuantity: product.originalQuantity || product.stock,
       restockedQuantity: product.restockedQuantity || 0,
-      history: product.stockHistory
+      history: product.stockHistory,
+      owner: product.createdBy
     });
 
   } catch (error) {
@@ -844,6 +1040,9 @@ exports.getStockHistory = async (req, res) => {
 // @access  Private/Admin
 exports.updateStockAlert = async (req, res) => {
   try {
+    console.log('⚠️ Updating stock alert level for product:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     const { lowStockAlert } = req.body;
 
     if (!lowStockAlert || lowStockAlert < 0) {
@@ -853,11 +1052,7 @@ exports.updateStockAlert = async (req, res) => {
       });
     }
 
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      { lowStockAlert },
-      { new: true, runValidators: true }
-    );
+    const product = await Product.findById(req.params.id).populate('createdBy', 'name email');
 
     if (!product) {
       return res.status(404).json({
@@ -866,16 +1061,33 @@ exports.updateStockAlert = async (req, res) => {
       });
     }
 
+    // Check if user has permission to update stock alert
+    if (req.user.role !== 'admin' && product.createdBy._id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to update stock alert for this product'
+      });
+    }
+
+    const updatedProduct = await Product.findByIdAndUpdate(
+      req.params.id,
+      { lowStockAlert },
+      { new: true, runValidators: true }
+    );
+
+    console.log(`✅ Stock alert updated for ${product.name} by ${req.user.name}`);
+
     res.json({
       success: true,
       message: 'Stock alert level updated successfully',
       product: {
-        _id: product._id,
-        name: product.name,
-        lowStockAlert: product.lowStockAlert,
-        stock: product.stock,
-        isLowStock: product.stock <= product.lowStockAlert
-      }
+        _id: updatedProduct._id,
+        name: updatedProduct.name,
+        lowStockAlert: updatedProduct.lowStockAlert,
+        stock: updatedProduct.stock,
+        isLowStock: updatedProduct.stock <= updatedProduct.lowStockAlert
+      },
+      updatedBy: req.user.name
     });
 
   } catch (error) {
@@ -899,6 +1111,7 @@ exports.getProductPerformance = async (req, res) => {
     const productId = req.params.id;
 
     console.log(`📈 Fetching performance for product: ${productId}, period: ${period}`);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
 
     // Validate product ID
     if (!mongoose.Types.ObjectId.isValid(productId)) {
@@ -908,11 +1121,19 @@ exports.getProductPerformance = async (req, res) => {
       });
     }
 
-    const product = await Product.findById(productId);
+    const product = await Product.findById(productId).populate('createdBy', 'name email');
     if (!product) {
       return res.status(404).json({
         success: false,
         message: 'Product not found'
+      });
+    }
+
+    // Check if user has permission to view performance
+    if (req.user.role !== 'admin' && product.createdBy._id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view performance for this product'
       });
     }
 
@@ -937,14 +1158,22 @@ exports.getProductPerformance = async (req, res) => {
         startDate = new Date().setHours(0, 0, 0, 0);
     }
 
-    // Get sales data for this product in the period
+    // Get sales data for this product in the period WITH USER FILTER
+    let salesFilter = {
+      createdAt: { $gte: new Date(startDate), $lte: endDate },
+      status: 'completed',
+      'items.product': new mongoose.Types.ObjectId(productId)
+    };
+    
+    // Add user filter for sales if present
+    const salesUserFilter = getUserFilterForContext(req, 'product-sales');
+    if (salesUserFilter.soldBy) {
+      salesFilter.soldBy = salesUserFilter.soldBy;
+    }
+
     const salesData = await Sale.aggregate([
       {
-        $match: {
-          createdAt: { $gte: new Date(startDate), $lte: endDate },
-          status: 'completed',
-          'items.product': new mongoose.Types.ObjectId(productId)
-        }
+        $match: salesFilter
       },
       {
         $unwind: '$items'
@@ -1012,7 +1241,13 @@ exports.getProductPerformance = async (req, res) => {
         stock: product.stock,
         originalQuantity: product.originalQuantity,
         totalSold: product.totalSold,
-        lowStockAlert: product.lowStockAlert
+        lowStockAlert: product.lowStockAlert,
+        createdBy: product.createdBy
+      },
+      filterInfo: {
+        salesFiltered: !!salesFilter.soldBy,
+        userId: req.user._id,
+        viewType: salesFilter.soldBy ? 'personal' : 'system'
       }
     });
 
@@ -1034,6 +1269,14 @@ exports.getTopProductsAnalytics = async (req, res) => {
     const { limit = 5, period = 'all' } = req.query;
 
     console.log(`🏆 Fetching top ${limit} products analytics for period: ${period}`);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+
+    // Build product query with proper user filtering
+    let productQuery = { isActive: true };
+    const userFilter = getUserFilterForContext(req, 'product-performance');
+    if (userFilter.createdBy) {
+      productQuery.createdBy = userFilter.createdBy;
+    }
 
     let dateFilter = {};
     if (period !== 'all') {
@@ -1059,9 +1302,16 @@ exports.getTopProductsAnalytics = async (req, res) => {
       dateFilter = { createdAt: { $gte: new Date(startDate), $lte: endDate } };
     }
 
-    // Get top products by sales
-    const topProducts = await Product.find({ isActive: true })
-      .select('name brand sellingPrice purchasePrice stock totalSold totalRevenue originalQuantity restockedQuantity lowStockAlert createdAt')
+    console.log(`🔍 Top Products Query:`, { 
+      limit,
+      period,
+      createdBy: productQuery.createdBy ? 'Filtered by creator' : 'No filter (admin system view)'
+    });
+
+    // Get top products by sales with user filter
+    const topProducts = await Product.find(productQuery)
+      .select('name brand sellingPrice purchasePrice stock totalSold totalRevenue originalQuantity restockedQuantity lowStockAlert createdAt createdBy')
+      .populate('createdBy', 'name email')
       .sort({ totalSold: -1 })
       .limit(parseInt(limit))
       .lean();
@@ -1069,14 +1319,22 @@ exports.getTopProductsAnalytics = async (req, res) => {
     // Enhance with performance data
     const productsWithPerformance = await Promise.all(
       topProducts.map(async (product) => {
-        // Get recent sales data for profit calculation
+        // Get recent sales data for profit calculation WITH USER FILTER
+        let salesFilter = {
+          ...dateFilter,
+          status: 'completed',
+          'items.product': new mongoose.Types.ObjectId(product._id)
+        };
+        
+        // Add user filter for sales if present
+        const salesUserFilter = getUserFilterForContext(req, 'product-sales');
+        if (salesUserFilter.soldBy) {
+          salesFilter.soldBy = salesUserFilter.soldBy;
+        }
+
         const salesData = await Sale.aggregate([
           {
-            $match: {
-              ...dateFilter,
-              status: 'completed',
-              'items.product': new mongoose.Types.ObjectId(product._id)
-            }
+            $match: salesFilter
           },
           {
             $unwind: '$items'
@@ -1132,7 +1390,12 @@ exports.getTopProductsAnalytics = async (req, res) => {
       success: true,
       count: productsWithPerformance.length,
       period,
-      products: productsWithPerformance
+      products: productsWithPerformance,
+      filterInfo: {
+        isFiltered: !!productQuery.createdBy,
+        userId: productQuery.createdBy || null,
+        viewType: productQuery.createdBy ? 'personal' : 'system'
+      }
     });
 
   } catch (error) {
@@ -1153,10 +1416,24 @@ exports.getProductTracking = async (req, res) => {
     const { limit = 10 } = req.query;
 
     console.log(`👀 Fetching product tracking data, limit: ${limit}`);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+
+    // Build query with proper user filtering
+    let productQuery = { isActive: true };
+    const userFilter = getUserFilterForContext(req, 'product-performance');
+    if (userFilter.createdBy) {
+      productQuery.createdBy = userFilter.createdBy;
+    }
+
+    console.log(`🔍 Product Tracking Query:`, { 
+      limit,
+      createdBy: productQuery.createdBy ? 'Filtered by creator' : 'No filter (admin system view)'
+    });
 
     // Get products with detailed tracking info
-    const products = await Product.find({ isActive: true })
-      .select('name brand sellingPrice purchasePrice stock totalSold originalQuantity restockedQuantity lowStockAlert stockHistory createdAt')
+    const products = await Product.find(productQuery)
+      .select('name brand sellingPrice purchasePrice stock totalSold originalQuantity restockedQuantity lowStockAlert stockHistory createdAt category createdBy')
+      .populate('createdBy', 'name email')
       .sort({ totalSold: -1 })
       .limit(parseInt(limit))
       .lean();
@@ -1172,11 +1449,15 @@ exports.getProductTracking = async (req, res) => {
       const totalCost = product.purchasePrice * product.totalSold;
       const totalProfit = totalRevenue - totalCost;
       const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+      const sellThroughRate = product.originalQuantity > 0 ? 
+        (product.totalSold / product.originalQuantity) * 100 : 0;
 
       return {
         _id: product._id,
         name: product.name,
         brand: product.brand,
+        category: product.category,
+        creator: product.createdBy,
         pricing: {
           cost: product.purchasePrice,
           price: product.sellingPrice,
@@ -1195,7 +1476,8 @@ exports.getProductTracking = async (req, res) => {
           totalRevenue,
           totalCost,
           totalProfit,
-          profitMargin
+          profitMargin,
+          sellThroughRate
         },
         restockInfo: {
           count: restockHistory.length,
@@ -1204,6 +1486,10 @@ exports.getProductTracking = async (req, res) => {
             quantity: lastRestock.unitsChanged,
             notes: lastRestock.notes
           } : null
+        },
+        performance: {
+          rating: calculateProductPerformance(totalProfit, profitMargin, sellThroughRate),
+          trend: 'stable'
         },
         timeline: {
           created: product.createdAt,
@@ -1217,7 +1503,12 @@ exports.getProductTracking = async (req, res) => {
     res.json({
       success: true,
       count: trackingData.length,
-      products: trackingData
+      products: trackingData,
+      filterInfo: {
+        isFiltered: !!productQuery.createdBy,
+        userId: productQuery.createdBy || null,
+        viewType: productQuery.createdBy ? 'personal' : 'system'
+      }
     });
 
   } catch (error) {
@@ -1229,3 +1520,106 @@ exports.getProductTracking = async (req, res) => {
     });
   }
 };
+
+// @desc    Get admin's own products (personal view)
+// @route   GET /api/products/admin/my-products
+// @access  Private/Admin
+exports.getAdminProducts = async (req, res) => {
+  try {
+    console.log('📦 Fetching admin personal products...');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+
+    // Always filter by current admin for personal view
+    const query = { 
+      isActive: true,
+      createdBy: req.user._id 
+    };
+
+    // Apply filters from query params
+    if (req.query.search && req.query.search.trim() !== '') {
+      query.$text = { $search: req.query.search.trim() };
+    }
+    
+    if (req.query.category && req.query.category !== 'All' && req.query.category !== '') {
+      query.category = { $regex: new RegExp(req.query.category, 'i') };
+    }
+    
+    if (req.query.priceRange && req.query.priceRange !== '') {
+      const [min, max] = req.query.priceRange.split('-').map(Number);
+      query.sellingPrice = {};
+      if (!isNaN(min) && min >= 0) query.sellingPrice.$gte = min;
+      if (!isNaN(max) && max > 0) query.sellingPrice.$lte = max;
+    }
+
+    if (req.query.featured === 'true') {
+      query.featured = true;
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 12;
+    const skip = (page - 1) * limit;
+
+    console.log(`🔍 Admin Personal Products Query:`, { 
+      page, limit, skip,
+      createdBy: req.user._id
+    });
+
+    const products = await Product.find(query)
+      .select('name brand sellingPrice purchasePrice category stock images description averageRating totalReviews featured createdAt totalSold lowStockAlert')
+      .populate('createdBy', 'name email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const total = await Product.countDocuments(query);
+    const totalPages = Math.ceil(total / limit);
+    const hasNextPage = page < totalPages;
+    const hasPrevPage = page > 1;
+
+    console.log(`✅ Admin personal products fetched: ${products.length} out of ${total}`);
+
+    res.json({
+      success: true,
+      count: products.length,
+      total,
+      pagination: {
+        page,
+        limit,
+        totalPages,
+        hasNextPage,
+        hasPrevPage,
+        nextPage: hasNextPage ? page + 1 : null,
+        prevPage: hasPrevPage ? page - 1 : null
+      },
+      products,
+      filterInfo: {
+        isFiltered: true,
+        userId: req.user._id,
+        viewType: 'personal'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Get admin products error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching admin products',
+      error: error.message
+    });
+  }
+};
+
+// Helper function to calculate product performance rating
+function calculateProductPerformance(totalProfit, profitMargin, sellThroughRate) {
+  const profitScore = totalProfit > 1000 ? 100 : (totalProfit / 1000) * 100;
+  const marginScore = profitMargin;
+  const sellThroughScore = sellThroughRate;
+  
+  const overall = (profitScore + marginScore + sellThroughScore) / 3;
+  
+  if (overall >= 80) return 'excellent';
+  if (overall >= 60) return 'good';
+  if (overall >= 40) return 'average';
+  return 'poor';
+}

@@ -4,6 +4,66 @@ const Sale = require('../models/Sale');
 const Notification = require('../models/Notification');
 const mongoose = require('mongoose');
 
+// Helper function to add user filter to query
+const addUserFilterToQuery = (req, query, fieldName = 'customer.user') => {
+  // If processedBy or other user field is in query (added by filterByUser middleware), use it
+  if (req.query[fieldName]) {
+    query[fieldName] = req.query[fieldName];
+    console.log(`🔍 [Orders] Filtering by ${fieldName} from query: ${req.query[fieldName]}`);
+  } 
+  // For admin-specific personal endpoints OR when view=my is specified
+  else if (req.user && req.user._id) {
+    // Check if this is an admin personal view for processed orders
+    const isAdminPersonalView = (
+      req.path.includes('/admin/') || 
+      req.query.view === 'my' || 
+      req.query.processedBy === 'me'
+    );
+    
+    if (isAdminPersonalView && fieldName === 'processedBy') {
+      // Admin personal view for processed orders
+      query[fieldName] = req.user._id;
+      console.log(`🔍 [Orders] Filtering by ${fieldName} from user: ${req.user._id} (admin personal view)`);
+    } else if (req.user.role !== 'admin' && fieldName === 'customer.user') {
+      // Regular users always filter by their customer user ID
+      query[fieldName] = req.user._id;
+      console.log(`🔍 [Orders] Filtering by ${fieldName} from user: ${req.user._id} (regular user)`);
+    } else {
+      console.log(`🔍 [Orders] [ADMIN SYSTEM VIEW] No user filter applied for ${fieldName}`);
+    }
+  }
+  return query;
+};
+
+// Helper function to get user filter based on context
+const getUserFilterForContext = (req, context = 'customer-orders') => {
+  const fieldMap = {
+    'customer-orders': 'customer.user',
+    'processed-orders': 'processedBy',
+    'delivered-orders': 'deliveredBy',
+    'confirmed-orders': 'confirmedBy',
+    'order-stats': 'processedBy'
+  };
+  
+  const fieldName = fieldMap[context];
+  const filter = {};
+  
+  if (req.query[fieldName]) {
+    filter[fieldName] = req.query[fieldName];
+  } else if (req.user && req.user._id) {
+    // For regular users, always filter by their customer ID
+    if (req.user.role !== 'admin' && context === 'customer-orders') {
+      filter[fieldName] = req.user._id;
+    }
+    // For admin personal view or specific contexts
+    else if (req.path.includes('/admin/') || req.query.view === 'my') {
+      filter[fieldName] = req.user._id;
+    }
+  }
+  
+  return filter;
+};
+
 // Generate order number
 const generateOrderNumber = async () => {
   const date = new Date();
@@ -31,13 +91,22 @@ const generateOrderNumber = async () => {
 };
 
 // Helper function to create notification for admins
-async function createOrderNotification(order, type = 'new_order', note = '') {
+async function createOrderNotification(order, type = 'new_order', note = '', targetUserId = null) {
   try {
     const User = require('../models/User');
-    const adminUsers = await User.find({ role: 'admin', isActive: true }).select('_id');
+    let usersToNotify = [];
     
-    if (adminUsers.length === 0) {
-      console.log('⚠️ No admin users found for notification');
+    if (targetUserId) {
+      // Notify specific user
+      usersToNotify.push({ _id: targetUserId });
+    } else {
+      // Default: notify all admins for new orders
+      const adminUsers = await User.find({ role: 'admin', isActive: true }).select('_id');
+      usersToNotify = adminUsers;
+    }
+    
+    if (usersToNotify.length === 0) {
+      console.log('⚠️ No users to notify');
       return;
     }
     
@@ -66,9 +135,9 @@ async function createOrderNotification(order, type = 'new_order', note = '') {
       message += `: ${note}`;
     }
     
-    const notificationPromises = adminUsers.map(admin => {
+    const notificationPromises = usersToNotify.map(user => {
       return Notification.create({
-        user: admin._id,
+        user: user._id,
         order: order._id,
         orderNumber: order.orderNumber,
         customerName: order.customer.name,
@@ -79,7 +148,7 @@ async function createOrderNotification(order, type = 'new_order', note = '') {
     });
     
     await Promise.all(notificationPromises);
-    console.log(`📢 Notifications created for order ${order.orderNumber}`);
+    console.log(`📢 Notifications created for order ${order.orderNumber} to ${usersToNotify.length} user(s)`);
   } catch (error) {
     console.error('❌ Error creating notification:', error);
   }
@@ -90,6 +159,7 @@ async function createOrderNotification(order, type = 'new_order', note = '') {
 // @access  Private
 exports.createOrder = async (req, res) => {
   console.log('🛒 Starting order creation process...');
+  console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
   
   const session = await mongoose.startSession();
   
@@ -102,7 +172,8 @@ exports.createOrder = async (req, res) => {
     console.log('🛒 Creating new order with data:', { 
       itemsCount: items?.length,
       customerName: customerInfo?.name,
-      paymentMethod 
+      paymentMethod,
+      userId: req.user.id
     });
 
     // Validate required fields
@@ -232,7 +303,7 @@ exports.createOrder = async (req, res) => {
         reference: null,
         referenceModel: 'Order',
         user: req.user.id,
-        notes: `Order: ${cartItem.quantity} units sold`
+        notes: `Order: ${cartItem.quantity} units sold by user ${req.user.name}`
       });
 
       await product.save({ session });
@@ -271,7 +342,8 @@ exports.createOrder = async (req, res) => {
         street: customerInfo.location,
         city: 'Kampala',
         country: 'Uganda'
-      }
+      },
+      createdBy: req.user.id
     });
 
     await order.save({ session });
@@ -294,7 +366,7 @@ exports.createOrder = async (req, res) => {
     await session.commitTransaction();
     await session.endSession();
     
-    console.log('✅ Order created successfully:', orderNumber);
+    console.log(`✅ Order created successfully: ${orderNumber} by user ${req.user.name}`);
 
     // Populate order data for response
     const populatedOrder = await Order.findById(order._id)
@@ -317,7 +389,8 @@ exports.createOrder = async (req, res) => {
         orderStatus: populatedOrder.orderStatus,
         paymentStatus: populatedOrder.paymentStatus,
         createdAt: populatedOrder.createdAt
-      }
+      },
+      createdBy: req.user.name
     });
 
   } catch (error) {
@@ -351,6 +424,10 @@ exports.getMyOrders = async (req, res) => {
   try {
     const { page = 1, limit = 10, status } = req.query;
     
+    console.log('📋 Fetching user orders...');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
+    // Regular users can only see their own orders
     let query = { 'customer.user': req.user.id };
     
     if (status && status !== 'all') {
@@ -368,7 +445,7 @@ exports.getMyOrders = async (req, res) => {
     
     const total = await Order.countDocuments(query);
     
-    console.log(`📋 Fetched ${orders.length} orders for user ${req.user.id}`);
+    console.log(`📋 Fetched ${orders.length} orders for user ${req.user.name}`);
     
     res.json({
       success: true,
@@ -379,7 +456,12 @@ exports.getMyOrders = async (req, res) => {
         limit: parseInt(limit),
         totalPages: Math.ceil(total / limit)
       },
-      orders
+      orders,
+      filterInfo: {
+        isFiltered: true,
+        userId: req.user._id,
+        viewType: 'personal'
+      }
     });
     
   } catch (error) {
@@ -397,9 +479,15 @@ exports.getMyOrders = async (req, res) => {
 // @access  Private
 exports.getOrder = async (req, res) => {
   try {
+    console.log('📦 Fetching single order:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     const order = await Order.findById(req.params.id)
       .populate('customer.user', 'name email phone')
-      .populate('items.product', 'name images category description');
+      .populate('items.product', 'name images category description')
+      .populate('processedBy', 'name email')
+      .populate('deliveredBy', 'name email')
+      .populate('confirmedBy', 'name email');
     
     if (!order) {
       return res.status(404).json({
@@ -409,18 +497,34 @@ exports.getOrder = async (req, res) => {
     }
     
     // Check if user owns the order or is admin
-    if (order.customer.user._id.toString() !== req.user.id && req.user.role !== 'admin') {
+    const isOwner = order.customer.user._id.toString() === req.user.id;
+    const isAdmin = req.user.role === 'admin';
+    const isProcessor = order.processedBy && order.processedBy._id.toString() === req.user.id;
+    const isDeliverer = order.deliveredBy && order.deliveredBy._id.toString() === req.user.id;
+    
+    if (!isOwner && !isAdmin && !isProcessor && !isDeliverer) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to access this order'
       });
     }
     
-    console.log(`📦 Fetched order ${order.orderNumber} for user ${req.user.id}`);
+    console.log(`📦 Fetched order ${order.orderNumber}`);
     
     res.json({
       success: true,
-      order
+      order,
+      permissionInfo: {
+        isOwner,
+        isAdmin,
+        isProcessor,
+        isDeliverer,
+        canCancel: isOwner && order.orderStatus === 'pending',
+        canConfirm: isOwner && order.orderStatus === 'delivered',
+        canProcess: isAdmin && order.orderStatus === 'pending',
+        canDeliver: isAdmin && order.orderStatus === 'processing',
+        canReject: isAdmin && order.orderStatus === 'pending'
+      }
     });
     
   } catch (error) {
@@ -440,6 +544,9 @@ exports.updateOrderStatus = async (req, res) => {
   const session = await mongoose.startSession();
   
   try {
+    console.log('🔄 Updating order status:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     await session.startTransaction();
     const { orderStatus, note } = req.body;
     
@@ -471,7 +578,7 @@ exports.updateOrderStatus = async (req, res) => {
     // Add to status history
     order.statusHistory.push({
       status: orderStatus,
-      note: note || `Status changed from ${previousStatus} to ${orderStatus}`,
+      note: note || `Status changed from ${previousStatus} to ${orderStatus} by ${req.user.name}`,
       changedBy: req.user.id
     });
     
@@ -488,6 +595,7 @@ exports.updateOrderStatus = async (req, res) => {
       // Restore product stock if order is cancelled
       await restoreOrderStock(order, req.user.id, session);
     } else if (orderStatus === 'processing') {
+      order.processedBy = req.user.id;
       // Create notification for processing order
       await createOrderNotification(order, 'processing', note);
     }
@@ -496,12 +604,13 @@ exports.updateOrderStatus = async (req, res) => {
     await session.commitTransaction();
     await session.endSession();
     
-    console.log(`🔄 Order ${order.orderNumber} status updated: ${previousStatus} -> ${orderStatus}`);
+    console.log(`🔄 Order ${order.orderNumber} status updated: ${previousStatus} -> ${orderStatus} by ${req.user.name}`);
     
     res.json({
       success: true,
       message: 'Order status updated successfully',
-      order
+      order,
+      updatedBy: req.user.name
     });
     
   } catch (error) {
@@ -533,6 +642,9 @@ exports.cancelOrder = async (req, res) => {
   const session = await mongoose.startSession();
   
   try {
+    console.log('❌ Cancelling order:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     await session.startTransaction();
     const { reason } = req.body;
     
@@ -575,7 +687,7 @@ exports.cancelOrder = async (req, res) => {
     // Add to status history
     order.statusHistory.push({
       status: 'cancelled',
-      note: `Order cancelled by user. Reason: ${reason || 'Not specified'}`,
+      note: `Order cancelled by user ${req.user.name}. Reason: ${reason || 'Not specified'}`,
       changedBy: req.user.id
     });
     
@@ -589,12 +701,13 @@ exports.cancelOrder = async (req, res) => {
     await session.commitTransaction();
     await session.endSession();
     
-    console.log(`❌ Order ${order.orderNumber} cancelled by user ${req.user.id}`);
+    console.log(`❌ Order ${order.orderNumber} cancelled by user ${req.user.name}`);
     
     res.json({
       success: true,
       message: 'Order cancelled successfully',
-      order
+      order,
+      cancelledBy: req.user.name
     });
     
   } catch (error) {
@@ -626,6 +739,9 @@ exports.processOrder = async (req, res) => {
   const session = await mongoose.startSession();
   
   try {
+    console.log('🔄 Processing order:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     await session.startTransaction();
     
     const order = await Order.findById(req.params.id).session(session);
@@ -655,23 +771,24 @@ exports.processOrder = async (req, res) => {
     // Add to status history
     order.statusHistory.push({
       status: 'processing',
-      note: `Order processed by admin and moved to processing`,
+      note: `Order processed by admin ${req.user.name} and moved to processing`,
       changedBy: req.user.id
     });
     
     // Create notification for processing order
-    await createOrderNotification(order, 'processing');
+    await createOrderNotification(order, 'processing', null, req.user.id);
     
     await order.save({ session });
     await session.commitTransaction();
     await session.endSession();
     
-    console.log(`🔄 Order ${order.orderNumber} processed by admin ${req.user.id}`);
+    console.log(`🔄 Order ${order.orderNumber} processed by admin ${req.user.name}`);
     
     res.json({
       success: true,
       message: 'Order processed successfully',
-      order
+      order,
+      processedBy: req.user.name
     });
     
   } catch (error) {
@@ -703,6 +820,9 @@ exports.deliverOrder = async (req, res) => {
   const session = await mongoose.startSession();
   
   try {
+    console.log('🚚 Delivering order:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     await session.startTransaction();
     
     const order = await Order.findById(req.params.id).session(session);
@@ -733,23 +853,24 @@ exports.deliverOrder = async (req, res) => {
     // Add to status history
     order.statusHistory.push({
       status: 'delivered',
-      note: `Order delivered by admin`,
+      note: `Order delivered by admin ${req.user.name}`,
       changedBy: req.user.id
     });
     
     // Create notification for delivered order
-    await createOrderNotification(order, 'delivered');
+    await createOrderNotification(order, 'delivered', null, req.user.id);
     
     await order.save({ session });
     await session.commitTransaction();
     await session.endSession();
     
-    console.log(`🚚 Order ${order.orderNumber} delivered by admin ${req.user.id}`);
+    console.log(`🚚 Order ${order.orderNumber} delivered by admin ${req.user.name}`);
     
     res.json({
       success: true,
       message: 'Order delivered successfully',
-      order
+      order,
+      deliveredBy: req.user.name
     });
     
   } catch (error) {
@@ -781,6 +902,9 @@ exports.rejectOrder = async (req, res) => {
   const session = await mongoose.startSession();
   
   try {
+    console.log('❌ Rejecting order:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     await session.startTransaction();
     const { reason } = req.body;
     
@@ -812,12 +936,12 @@ exports.rejectOrder = async (req, res) => {
     // Add to status history
     order.statusHistory.push({
       status: 'cancelled',
-      note: `Order rejected by admin. Reason: ${reason || 'Not specified'}`,
+      note: `Order rejected by admin ${req.user.name}. Reason: ${reason || 'Not specified'}`,
       changedBy: req.user.id
     });
     
     // Create notification for rejected order
-    await createOrderNotification(order, 'cancelled', order.cancellationReason);
+    await createOrderNotification(order, 'cancelled', order.cancellationReason, req.user.id);
     
     // Restore product stock
     await restoreOrderStock(order, req.user.id, session);
@@ -826,12 +950,13 @@ exports.rejectOrder = async (req, res) => {
     await session.commitTransaction();
     await session.endSession();
     
-    console.log(`❌ Order ${order.orderNumber} rejected by admin ${req.user.id}`);
+    console.log(`❌ Order ${order.orderNumber} rejected by admin ${req.user.name}`);
     
     res.json({
       success: true,
       message: 'Order rejected successfully',
-      order
+      order,
+      rejectedBy: req.user.name
     });
     
   } catch (error) {
@@ -863,6 +988,9 @@ exports.confirmDelivery = async (req, res) => {
   const session = await mongoose.startSession();
   
   try {
+    console.log('✅ Confirming delivery for order:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     await session.startTransaction();
     const { confirmationNote } = req.body;
     
@@ -905,12 +1033,12 @@ exports.confirmDelivery = async (req, res) => {
     // Add to status history
     order.statusHistory.push({
       status: 'confirmed',
-      note: `Delivery confirmed by customer. Note: ${confirmationNote || 'No note provided'}`,
+      note: `Delivery confirmed by customer ${req.user.name}. Note: ${confirmationNote || 'No note provided'}`,
       changedBy: req.user.id
     });
     
     // Create notification for confirmed order
-    await createOrderNotification(order, 'confirmed', confirmationNote);
+    await createOrderNotification(order, 'confirmed', confirmationNote, req.user.id);
     
     // Create sale record when order is confirmed
     const sale = await createSaleFromOrder(order, req.user.id, session);
@@ -920,12 +1048,13 @@ exports.confirmDelivery = async (req, res) => {
     await session.commitTransaction();
     await session.endSession();
     
-    console.log(`✅ Order ${order.orderNumber} delivery confirmed by user ${req.user.id}`);
+    console.log(`✅ Order ${order.orderNumber} delivery confirmed by user ${req.user.name}`);
     
     res.json({
       success: true,
       message: 'Delivery confirmed successfully',
-      order
+      order,
+      confirmedBy: req.user.name
     });
     
   } catch (error) {
@@ -957,6 +1086,9 @@ exports.getOrderStats = async (req, res) => {
   try {
     const { period = 'month' } = req.query;
     
+    console.log('📊 Fetching order statistics...');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     let startDate = new Date();
     switch (period) {
       case 'today':
@@ -975,11 +1107,25 @@ exports.getOrderStats = async (req, res) => {
         startDate.setMonth(startDate.getMonth() - 1);
     }
     
+    // Build query with proper user filtering for admin personal view
+    let query = {
+      createdAt: { $gte: startDate }
+    };
+    
+    // Add user filter for processed orders if in admin personal view
+    const userFilter = getUserFilterForContext(req, 'order-stats');
+    if (userFilter.processedBy) {
+      query.processedBy = userFilter.processedBy;
+    }
+    
+    console.log(`🔍 Order Stats Query:`, { 
+      period,
+      processedBy: query.processedBy ? 'Filtered by processor' : 'No filter (admin system view)'
+    });
+    
     const stats = await Order.aggregate([
       {
-        $match: {
-          createdAt: { $gte: startDate }
-        }
+        $match: query
       },
       {
         $group: {
@@ -1020,7 +1166,12 @@ exports.getOrderStats = async (req, res) => {
     res.json({
       success: true,
       period,
-      stats: result
+      stats: result,
+      filterInfo: {
+        isFiltered: !!query.processedBy,
+        userId: query.processedBy || null,
+        viewType: query.processedBy ? 'personal' : 'system'
+      }
     });
     
   } catch (error) {
@@ -1040,6 +1191,9 @@ exports.getAllOrders = async (req, res) => {
   try {
     const { page = 1, limit = 10, status, startDate, endDate } = req.query;
     
+    console.log('📋 Fetching all orders...');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
     let query = {};
     
     // Status filter
@@ -1052,6 +1206,13 @@ exports.getAllOrders = async (req, res) => {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
       if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+    
+    // For admin personal view, filter by processed orders
+    const isAdminPersonalView = req.path.includes('/admin/') || req.query.view === 'my';
+    if (isAdminPersonalView && req.user.role === 'admin') {
+      query.processedBy = req.user._id;
+      console.log(`🔍 Filtering orders processed by admin: ${req.user.name}`);
     }
     
     const skip = (page - 1) * limit;
@@ -1080,7 +1241,12 @@ exports.getAllOrders = async (req, res) => {
         limit: parseInt(limit),
         totalPages: Math.ceil(total / limit)
       },
-      orders
+      orders,
+      filterInfo: {
+        isFiltered: !!query.processedBy,
+        userId: query.processedBy || null,
+        viewType: query.processedBy ? 'personal' : 'system'
+      }
     });
     
   } catch (error) {
@@ -1098,17 +1264,34 @@ exports.getAllOrders = async (req, res) => {
 // @access  Private/Admin
 exports.getDashboardStats = async (req, res) => {
   try {
+    console.log('📊 Fetching dashboard statistics...');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
+    // Build query with proper user filtering
+    let todayQuery = {};
+    let weekQuery = {};
+    let overallQuery = {};
+    
+    // For admin personal view, filter by processed orders
+    const isAdminPersonalView = req.path.includes('/admin/') || req.query.view === 'my';
+    if (isAdminPersonalView && req.user.role === 'admin') {
+      todayQuery.processedBy = req.user._id;
+      weekQuery.processedBy = req.user._id;
+      overallQuery.processedBy = req.user._id;
+      console.log(`🔍 Filtering dashboard stats by processor: ${req.user.name}`);
+    }
+    
     // Today's stats
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
+    
+    todayQuery.createdAt = { $gte: todayStart, $lte: todayEnd };
 
     const todayStats = await Order.aggregate([
       {
-        $match: {
-          createdAt: { $gte: todayStart, $lte: todayEnd }
-        }
+        $match: todayQuery
       },
       {
         $group: {
@@ -1123,11 +1306,11 @@ exports.getDashboardStats = async (req, res) => {
     const weekStart = new Date();
     weekStart.setDate(weekStart.getDate() - 7);
     
+    weekQuery.createdAt = { $gte: weekStart };
+
     const weekStats = await Order.aggregate([
       {
-        $match: {
-          createdAt: { $gte: weekStart }
-        }
+        $match: weekQuery
       },
       {
         $group: {
@@ -1140,6 +1323,9 @@ exports.getDashboardStats = async (req, res) => {
 
     // Overall stats
     const overallStats = await Order.aggregate([
+      {
+        $match: overallQuery
+      },
       {
         $group: {
           _id: null,
@@ -1184,7 +1370,12 @@ exports.getDashboardStats = async (req, res) => {
 
     res.json({
       success: true,
-      stats: result
+      stats: result,
+      filterInfo: {
+        isFiltered: !!todayQuery.processedBy,
+        userId: todayQuery.processedBy || null,
+        viewType: todayQuery.processedBy ? 'personal' : 'system'
+      }
     });
 
   } catch (error) {
@@ -1192,6 +1383,75 @@ exports.getDashboardStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while fetching dashboard statistics',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get admin's processed orders (personal view)
+// @route   GET /api/orders/admin/my-orders
+// @access  Private/Admin
+exports.getAdminOrders = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, status, startDate, endDate } = req.query;
+    
+    console.log('📋 Fetching admin personal orders...');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    
+    // Always filter by current admin for personal view
+    let query = { processedBy: req.user._id };
+    
+    // Status filter
+    if (status && status !== 'all') {
+      query.orderStatus = status;
+    }
+    
+    // Date range filter
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+    
+    const skip = (page - 1) * limit;
+    
+    const orders = await Order.find(query)
+      .populate('customer.user', 'name email')
+      .populate('items.product', 'name images')
+      .populate('processedBy', 'name')
+      .populate('deliveredBy', 'name')
+      .populate('confirmedBy', 'name')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+    
+    const total = await Order.countDocuments(query);
+    
+    console.log(`📋 Admin fetched ${orders.length} orders processed by them`);
+    
+    res.json({
+      success: true,
+      count: orders.length,
+      total,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / limit)
+      },
+      orders,
+      filterInfo: {
+        isFiltered: true,
+        userId: req.user._id,
+        viewType: 'personal'
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Get admin orders error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching admin orders',
       error: error.message
     });
   }

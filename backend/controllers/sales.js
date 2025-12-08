@@ -2,6 +2,43 @@ const Sale = require('../models/Sale');
 const Product = require('../models/Product');
 const mongoose = require('mongoose');
 
+// Enhanced Helper function to add user filter to query
+const addUserFilterToQuery = (req, query, fieldName = 'soldBy') => {
+  // If soldBy is in query (added by filterByUser middleware), use it
+  if (req.query[fieldName]) {
+    query[fieldName] = req.query[fieldName];
+    console.log(`🔍 [Sales] Filtering by ${fieldName} from query: ${req.query[fieldName]}`);
+  } 
+  // For admin-specific personal endpoints OR when view=my is specified
+  else if (req.user && req.user._id) {
+    // CRITICAL FIX: ALWAYS filter non-admin users
+    if (req.user.role !== 'admin') {
+      query[fieldName] = req.user._id;
+      console.log(`🔍 [Sales][NON-ADMIN] Auto-filtering by ${fieldName}: ${req.user._id}`);
+    } 
+    // For admins, check if personal view is requested
+    else {
+      const isAdminPersonalView = (
+        req.path.includes('/admin/') || 
+        req.path.includes('/my/') ||
+        req.query.view === 'my' || 
+        req.query.filter === 'my' ||
+        req.query.soldBy === 'me'
+      );
+      
+      if (isAdminPersonalView) {
+        // Admin in personal view: filter by their ID
+        query[fieldName] = req.user._id;
+        console.log(`🔍 [Sales][ADMIN PERSONAL] Filtering by ${fieldName}: ${req.user._id}`);
+      } else {
+        // Admin in system view: no filter (sees all)
+        console.log(`🔍 [Sales][ADMIN SYSTEM VIEW] No user filter applied for ${fieldName}`);
+      }
+    }
+  }
+  return query;
+};
+
 // Helper function to generate sale number
 const generateSaleNumber = async () => {
   const date = new Date();
@@ -30,7 +67,7 @@ const generateSaleNumber = async () => {
 
 // @desc    Create new sale
 // @route   POST /api/sales
-// @access  Private (Admin, Sales)
+// @access  Private
 exports.createSale = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -56,6 +93,9 @@ exports.createSale = async (req, res) => {
         message: 'Sale items are required'
       });
     }
+
+    console.log(`🛒 Creating sale by user: ${req.user.name} (${req.user.role})`);
+    console.log('📍 Path:', req.path);
 
     // Generate sale number
     const saleNumber = await generateSaleNumber();
@@ -140,7 +180,7 @@ exports.createSale = async (req, res) => {
         reference: null,
         referenceModel: 'Sale',
         user: req.user.id,
-        notes: `Sale: ${item.quantity} units`
+        notes: `Sale: ${item.quantity} units by ${req.user.name}`
       });
 
       await product.save({ session });
@@ -166,7 +206,8 @@ exports.createSale = async (req, res) => {
       amountPaid: amountPaid || totalAmount,
       balance: totalAmount - (amountPaid || totalAmount),
       notes,
-      soldBy: req.user.id
+      soldBy: req.user.id,
+      createdBy: req.user.id
     });
 
     await sale.save({ session });
@@ -185,18 +226,22 @@ exports.createSale = async (req, res) => {
     // Populate sale data
     await sale.populate('soldBy', 'name');
 
+    console.log(`✅ Sale created: ${saleNumber} by ${req.user.name}`);
+
     res.status(201).json({
       success: true,
       message: 'Sale created successfully',
       sale,
-      receipt: generateReceiptData(sale)
+      receipt: generateReceiptData(sale),
+      createdBy: req.user.name,
+      userRole: req.user.role
     });
 
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
     
-    console.error('Create sale error:', error);
+    console.error('❌ Create sale error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while creating sale',
@@ -207,12 +252,18 @@ exports.createSale = async (req, res) => {
 
 // @desc    Get all sales with filtering and pagination
 // @route   GET /api/sales
-// @access  Private (Admin, Sales)
+// @access  Private
 exports.getSales = async (req, res) => {
   try {
     const { page = 1, limit = 10, startDate, endDate, customer, status, paymentStatus } = req.query;
     
+    console.log(`📋 Fetching sales for user: ${req.user.name} (${req.user.role})`);
+    console.log('📍 Path:', req.path);
+    
     let query = {};
+    
+    // Add user filter - automatic based on user role and route
+    addUserFilterToQuery(req, query, 'soldBy');
     
     // Date range filter
     if (startDate || endDate) {
@@ -238,6 +289,13 @@ exports.getSales = async (req, res) => {
     
     const skip = (page - 1) * limit;
     
+    console.log(`🔍 Sales Query:`, { 
+      page, limit, skip,
+      soldBy: query.soldBy ? 'Filtered by user' : 'No filter (admin system view)',
+      userRole: req.user.role,
+      path: req.path
+    });
+    
     const sales = await Sale.find(query)
       .populate('soldBy', 'name')
       .sort({ createdAt: -1 })
@@ -246,6 +304,8 @@ exports.getSales = async (req, res) => {
       .lean();
     
     const total = await Sale.countDocuments(query);
+    
+    console.log(`✅ Fetched ${sales.length} sales out of ${total} total`);
     
     res.json({
       success: true,
@@ -256,11 +316,18 @@ exports.getSales = async (req, res) => {
         limit: parseInt(limit),
         totalPages: Math.ceil(total / limit)
       },
-      sales
+      sales,
+      filterInfo: {
+        isFiltered: !!query.soldBy,
+        userId: query.soldBy || null,
+        userRole: req.user.role,
+        viewType: query.soldBy ? 'personal' : 'system',
+        accessedVia: req.path
+      }
     });
     
   } catch (error) {
-    console.error('Get sales error:', error);
+    console.error('❌ Get sales error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while fetching sales',
@@ -271,9 +338,11 @@ exports.getSales = async (req, res) => {
 
 // @desc    Get single sale
 // @route   GET /api/sales/:id
-// @access  Private (Admin, Sales)
+// @access  Private
 exports.getSale = async (req, res) => {
   try {
+    console.log(`📄 Fetching sale: ${req.params.id} for user: ${req.user.name} (${req.user.role})`);
+    
     const sale = await Sale.findById(req.params.id)
       .populate('soldBy', 'name');
     
@@ -284,14 +353,33 @@ exports.getSale = async (req, res) => {
       });
     }
     
+    // Check if user has permission to view this sale
+    const isOwner = sale.soldBy._id.toString() === req.user._id.toString();
+    const isAdmin = req.user.role === 'admin';
+    
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view this sale'
+      });
+    }
+    
+    console.log(`✅ Sale fetched: ${sale.saleNumber}`);
+    
     res.json({
       success: true,
       sale,
-      receipt: generateReceiptData(sale)
+      receipt: generateReceiptData(sale),
+      permissionInfo: {
+        isOwner,
+        isAdmin,
+        canCancel: isAdmin || (isOwner && sale.status === 'completed'),
+        canUpdatePayment: isAdmin
+      }
     });
     
   } catch (error) {
-    console.error('Get sale error:', error);
+    console.error('❌ Get sale error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while fetching sale',
@@ -302,10 +390,12 @@ exports.getSale = async (req, res) => {
 
 // @desc    Update sale payment
 // @route   PUT /api/sales/:id/payment
-// @access  Private (Admin, Sales)
+// @access  Private
 exports.updatePayment = async (req, res) => {
   try {
     const { amountPaid, paymentMethod } = req.body;
+    
+    console.log(`💰 Updating payment for sale: ${req.params.id} by user: ${req.user.name} (${req.user.role})`);
     
     const sale = await Sale.findById(req.params.id);
     
@@ -313,6 +403,17 @@ exports.updatePayment = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Sale not found'
+      });
+    }
+    
+    // Check permissions
+    const isOwner = sale.soldBy.toString() === req.user._id.toString();
+    const isAdmin = req.user.role === 'admin';
+    
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to update this sale'
       });
     }
     
@@ -333,16 +434,20 @@ exports.updatePayment = async (req, res) => {
       sale.paymentMethod = paymentMethod;
     }
     
+    sale.updatedBy = req.user.id;
     await sale.save();
+    
+    console.log(`✅ Payment updated for sale: ${sale.saleNumber}`);
     
     res.json({
       success: true,
       message: 'Payment updated successfully',
-      sale
+      sale,
+      updatedBy: req.user.name
     });
     
   } catch (error) {
-    console.error('Update payment error:', error);
+    console.error('❌ Update payment error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while updating payment',
@@ -353,12 +458,14 @@ exports.updatePayment = async (req, res) => {
 
 // @desc    Cancel sale
 // @route   PUT /api/sales/:id/cancel
-// @access  Private (Admin)
+// @access  Private
 exports.cancelSale = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
+    console.log(`❌ Cancelling sale: ${req.params.id} by user: ${req.user.name} (${req.user.role})`);
+    
     const sale = await Sale.findById(req.params.id).session(session);
     
     if (!sale) {
@@ -367,6 +474,19 @@ exports.cancelSale = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Sale not found'
+      });
+    }
+    
+    // Check permissions
+    const isOwner = sale.soldBy.toString() === req.user._id.toString();
+    const isAdmin = req.user.role === 'admin';
+    
+    if (!isOwner && !isAdmin) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to cancel this sale'
       });
     }
     
@@ -397,7 +517,7 @@ exports.cancelSale = async (req, res) => {
           reference: sale._id,
           referenceModel: 'Sale',
           user: req.user.id,
-          notes: 'Sale cancellation - stock restored'
+          notes: `Sale cancellation by ${req.user.name} - stock restored`
         });
         
         await product.save({ session });
@@ -405,22 +525,27 @@ exports.cancelSale = async (req, res) => {
     }
     
     sale.status = 'cancelled';
+    sale.cancelledBy = req.user.id;
+    sale.cancelledAt = new Date();
     await sale.save({ session });
     
     await session.commitTransaction();
     session.endSession();
     
+    console.log(`✅ Sale cancelled: ${sale.saleNumber}`);
+    
     res.json({
       success: true,
       message: 'Sale cancelled successfully',
-      sale
+      sale,
+      cancelledBy: req.user.name
     });
     
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
     
-    console.error('Cancel sale error:', error);
+    console.error('❌ Cancel sale error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while cancelling sale',
@@ -431,9 +556,11 @@ exports.cancelSale = async (req, res) => {
 
 // @desc    Delete sale permanently
 // @route   DELETE /api/sales/:id
-// @access  Private (Admin)
+// @access  Private/Admin
 exports.deleteSale = async (req, res) => {
   try {
+    console.log(`🗑️ Deleting sale: ${req.params.id} by admin: ${req.user.name}`);
+    
     const sale = await Sale.findById(req.params.id);
     
     if (!sale) {
@@ -443,15 +570,27 @@ exports.deleteSale = async (req, res) => {
       });
     }
     
+    // Only admin can delete permanently
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only admin users can delete sales permanently'
+      });
+    }
+    
     await Sale.findByIdAndDelete(req.params.id);
+    
+    console.log(`✅ Sale deleted permanently: ${sale.saleNumber}`);
     
     res.json({
       success: true,
-      message: 'Sale deleted permanently'
+      message: 'Sale deleted permanently',
+      deletedSaleNumber: sale.saleNumber,
+      deletedBy: req.user.name
     });
     
   } catch (error) {
-    console.error('Delete sale error:', error);
+    console.error('❌ Delete sale error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while deleting sale',
@@ -462,12 +601,14 @@ exports.deleteSale = async (req, res) => {
 
 // @desc    Resume cancelled sale
 // @route   PUT /api/sales/:id/resume
-// @access  Private (Admin)
+// @access  Private/Admin
 exports.resumeSale = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
+    console.log(`🔄 Resuming sale: ${req.params.id} by admin: ${req.user.name}`);
+    
     const sale = await Sale.findById(req.params.id)
       .populate('items.product')
       .session(session);
@@ -487,6 +628,16 @@ exports.resumeSale = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Only cancelled sales can be resumed'
+      });
+    }
+    
+    // Only admin can resume sales
+    if (req.user.role !== 'admin') {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'Only admin users can resume cancelled sales'
       });
     }
     
@@ -518,7 +669,7 @@ exports.resumeSale = async (req, res) => {
           reference: sale._id,
           referenceModel: 'Sale',
           user: req.user.id,
-          notes: `Sale resumed - deducted ${item.quantity} units`
+          notes: `Sale resumed by ${req.user.name} - deducted ${item.quantity} units`
         });
         
         await product.save({ session });
@@ -533,17 +684,20 @@ exports.resumeSale = async (req, res) => {
     await session.commitTransaction();
     session.endSession();
     
+    console.log(`✅ Sale resumed: ${sale.saleNumber}`);
+    
     res.json({
       success: true,
       message: 'Sale resumed successfully',
-      sale
+      sale,
+      resumedBy: req.user.name
     });
     
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
     
-    console.error('Resume sale error:', error);
+    console.error('❌ Resume sale error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while resuming sale',
@@ -554,10 +708,14 @@ exports.resumeSale = async (req, res) => {
 
 // @desc    Get sales statistics
 // @route   GET /api/sales/stats
-// @access  Private (Admin, Sales)
+// @access  Private
 exports.getSalesStats = async (req, res) => {
   try {
     const { period = 'today' } = req.query;
+    
+    console.log(`📊 Fetching sales stats for period: ${period}`);
+    console.log(`👤 User: ${req.user.name} (${req.user.role})`);
+    console.log('📍 Path:', req.path);
     
     let startDate, endDate = new Date();
     
@@ -578,12 +736,25 @@ exports.getSalesStats = async (req, res) => {
         startDate = new Date().setHours(0, 0, 0, 0);
     }
     
+    // Build query with user filter
+    let query = {
+      createdAt: { $gte: new Date(startDate), $lte: endDate },
+      status: 'completed'
+    };
+    
+    // Add user filter - automatic based on user role and route
+    addUserFilterToQuery(req, query, 'soldBy');
+    
+    console.log(`🔍 Sales Stats Query:`, { 
+      period,
+      soldBy: query.soldBy ? 'Filtered by user' : 'No filter (admin system view)',
+      userRole: req.user.role,
+      path: req.path
+    });
+    
     const stats = await Sale.aggregate([
       {
-        $match: {
-          createdAt: { $gte: new Date(startDate), $lte: endDate },
-          status: 'completed'
-        }
+        $match: query
       },
       {
         $group: {
@@ -605,17 +776,179 @@ exports.getSalesStats = async (req, res) => {
       averageSale: 0
     };
     
+    console.log(`✅ Sales stats fetched: ${result.totalSales} sales`);
+    
     res.json({
       success: true,
       period,
-      stats: result
+      stats: result,
+      filterInfo: {
+        isFiltered: !!query.soldBy,
+        userId: query.soldBy || null,
+        userRole: req.user.role,
+        viewType: query.soldBy ? 'personal' : 'system',
+        accessedVia: req.path
+      }
     });
     
   } catch (error) {
-    console.error('Get sales stats error:', error);
+    console.error('❌ Get sales stats error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while fetching sales statistics',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get user's personal sales
+// @route   GET /api/sales/my-sales
+// @access  Private
+exports.getMySales = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, startDate, endDate, status, paymentStatus } = req.query;
+    
+    console.log(`📋 Fetching personal sales for user: ${req.user.name} (${req.user.role})`);
+    
+    let query = {
+      soldBy: req.user._id // Always filter by current user
+    };
+    
+    // Date range filter
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+    
+    // Status filter
+    if (status) {
+      query.status = status;
+    }
+    
+    // Payment status filter
+    if (paymentStatus) {
+      query.paymentStatus = paymentStatus;
+    }
+    
+    const skip = (page - 1) * limit;
+    
+    console.log(`🔍 Personal Sales Query:`, { 
+      page, limit, skip,
+      soldBy: req.user._id,
+      userRole: req.user.role
+    });
+    
+    const sales = await Sale.find(query)
+      .populate('soldBy', 'name')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+    
+    const total = await Sale.countDocuments(query);
+    
+    console.log(`✅ Fetched ${sales.length} personal sales`);
+    
+    res.json({
+      success: true,
+      count: sales.length,
+      total,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / limit)
+      },
+      sales,
+      filterInfo: {
+        isFiltered: true,
+        userId: req.user._id,
+        userRole: req.user.role,
+        viewType: 'personal'
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Get my sales error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching personal sales',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Get admin's personal sales
+// @route   GET /api/sales/admin/my-sales
+// @access  Private/Admin
+exports.getAdminSales = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, startDate, endDate, status, paymentStatus } = req.query;
+    
+    console.log(`📋 [ADMIN PERSONAL] Fetching sales for admin: ${req.user.name}`);
+    
+    let query = {
+      soldBy: req.user._id // Always filter by current admin
+    };
+    
+    // Date range filter
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+    
+    // Status filter
+    if (status) {
+      query.status = status;
+    }
+    
+    // Payment status filter
+    if (paymentStatus) {
+      query.paymentStatus = paymentStatus;
+    }
+    
+    const skip = (page - 1) * limit;
+    
+    console.log(`🔍 [ADMIN PERSONAL] Sales Query:`, { 
+      page, limit, skip,
+      soldBy: req.user._id
+    });
+    
+    const sales = await Sale.find(query)
+      .populate('soldBy', 'name')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+    
+    const total = await Sale.countDocuments(query);
+    
+    console.log(`✅ [ADMIN PERSONAL] Fetched ${sales.length} sales`);
+    
+    res.json({
+      success: true,
+      count: sales.length,
+      total,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / limit)
+      },
+      sales,
+      filterInfo: {
+        isFiltered: true,
+        userId: req.user._id,
+        userRole: 'admin',
+        viewType: 'personal'
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ [ADMIN PERSONAL] Get sales error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching admin personal sales',
       error: error.message
     });
   }

@@ -2,12 +2,41 @@ const Product = require('../models/Product');
 const Sale = require('../models/Sale');
 const mongoose = require('mongoose');
 
-// Helper function to add user filter to query
+// Enhanced Helper function to add user filter to query
 const addUserFilterToQuery = (req, query, fieldName = 'soldBy') => {
   // If createdBy/soldBy is in query (added by filterByUser middleware), use it
   if (req.query[fieldName]) {
     query[fieldName] = req.query[fieldName];
-    console.log(`🔍 Filtering by ${fieldName}: ${req.query[fieldName]}`);
+    console.log(`🔍 Filtering by ${fieldName} from query: ${req.query[fieldName]}`);
+  } 
+  // For admin-specific personal endpoints OR when view=my is specified
+  else if (req.user && req.user._id) {
+    // CRITICAL FIX: ALWAYS filter non-admin users
+    if (req.user.role !== 'admin') {
+      query[fieldName] = req.user._id;
+      console.log(`🔍 [NON-ADMIN] Auto-filtering by ${fieldName}: ${req.user._id}`);
+    } 
+    // For admins, check if personal view is requested
+    else {
+      const isAdminPersonalView = (
+        req.path.includes('/admin/') || 
+        req.path.includes('/my/') ||
+        req.path.includes('/user/') ||
+        req.query.view === 'my' || 
+        req.query.filter === 'my' ||
+        req.query.soldBy === 'me' || 
+        req.query.createdBy === 'me'
+      );
+      
+      if (isAdminPersonalView) {
+        // Admin in personal view: filter by their ID
+        query[fieldName] = req.user._id;
+        console.log(`🔍 [ADMIN PERSONAL] Filtering by ${fieldName}: ${req.user._id}`);
+      } else {
+        // Admin in system view: no filter (sees all)
+        console.log(`🔍 [ADMIN SYSTEM VIEW] No user filter applied for ${fieldName}`);
+      }
+    }
   }
   return query;
 };
@@ -37,15 +66,51 @@ const addDateRangeFilter = (period, query) => {
   return query;
 };
 
+// Helper function to get user filter based on context
+const getUserFilterForContext = (req, context = 'sales') => {
+  const fieldMap = {
+    'sales': 'soldBy',
+    'products': 'createdBy',
+    'inventory': 'createdBy',
+    'performance-sales': 'soldBy',
+    'performance-products': 'createdBy'
+  };
+  
+  const fieldName = fieldMap[context];
+  const filter = {};
+  
+  if (req.query[fieldName]) {
+    filter[fieldName] = req.query[fieldName];
+  } else if (req.user && req.user._id) {
+    // CRITICAL FIX: ALWAYS filter non-admin users
+    if (req.user.role !== 'admin') {
+      filter[fieldName] = req.user._id;
+      console.log(`🔍 [NON-ADMIN CONTEXT] Auto-filtering ${context} by ${fieldName}: ${req.user._id}`);
+    }
+    // For admins, check if personal view is requested
+    else if (req.path.includes('/admin/') || req.path.includes('/my/') || 
+             req.path.includes('/user/') || req.query.view === 'my') {
+      filter[fieldName] = req.user._id;
+      console.log(`🔍 [ADMIN PERSONAL CONTEXT] Filtering ${context} by ${fieldName}: ${req.user._id}`);
+    }
+    // Otherwise, admin sees all data (no filter)
+  }
+  
+  return filter;
+};
+
 // @desc    Get sales overview analytics
 // @route   GET /api/analytics/sales/overview
-// @access  Private/Admin
+// @route   GET /api/analytics/user/sales-overview
+// @route   GET /api/analytics/admin/sales-overview
+// @access  Private
 exports.getSalesOverview = async (req, res) => {
   try {
     const { period = 'week' } = req.query;
     
     console.log(`📊 Fetching sales overview for period: ${period}`);
-    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    console.log('📍 Path:', req.path);
 
     // Build base query
     let baseQuery = {
@@ -55,13 +120,15 @@ exports.getSalesOverview = async (req, res) => {
     // Add date range filter
     baseQuery = addDateRangeFilter(period, baseQuery);
     
-    // Add user filter if present
-    baseQuery = addUserFilterToQuery(req, baseQuery, 'soldBy');
+    // Add user filter - automatic based on user role and route
+    addUserFilterToQuery(req, baseQuery, 'soldBy');
 
     console.log(`🔍 Sales Overview Query:`, { 
       period,
-      soldBy: req.query.soldBy,
-      dateRange: baseQuery.createdAt 
+      soldBy: baseQuery.soldBy ? 'Filtered by user' : 'No filter (admin system view)',
+      dateRange: baseQuery.createdAt,
+      userRole: req.user?.role,
+      path: req.path
     });
 
     // Sales statistics
@@ -130,6 +197,13 @@ exports.getSalesOverview = async (req, res) => {
       trends: {
         dailySales,
         paymentMethods
+      },
+      filterInfo: {
+        isFiltered: !!baseQuery.soldBy,
+        userId: baseQuery.soldBy || null,
+        userRole: req.user?.role,
+        viewType: baseQuery.soldBy ? 'personal' : 'system',
+        accessedVia: req.path
       }
     });
 
@@ -145,23 +219,28 @@ exports.getSalesOverview = async (req, res) => {
 
 // @desc    Get product analytics
 // @route   GET /api/analytics/products
-// @access  Private/Admin
+// @route   GET /api/analytics/user/product-analytics
+// @route   GET /api/analytics/admin/product-analytics
+// @access  Private
 exports.getProductAnalytics = async (req, res) => {
   try {
     const { period = 'all' } = req.query;
 
     console.log(`📈 Fetching product analytics for period: ${period}`);
-    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    console.log('📍 Path:', req.path);
 
     // Build base query for products
     let productQuery = { isActive: true };
     
-    // Add user filter if present (for product analytics, filter by createdBy)
-    productQuery = addUserFilterToQuery(req, productQuery, 'createdBy');
+    // Add user filter - automatic based on user role and route
+    addUserFilterToQuery(req, productQuery, 'createdBy');
 
     console.log(`🔍 Product Analytics Query:`, { 
       period,
-      createdBy: req.query.createdBy
+      createdBy: productQuery.createdBy ? 'Filtered by creator' : 'No filter (admin system view)',
+      userRole: req.user?.role,
+      path: req.path
     });
 
     // Get product statistics with user filter
@@ -261,7 +340,14 @@ exports.getProductAnalytics = async (req, res) => {
       stats,
       topProducts,
       categories: categoryPerformance,
-      stockAnalysis
+      stockAnalysis,
+      filterInfo: {
+        isFiltered: !!productQuery.createdBy,
+        userId: productQuery.createdBy || null,
+        userRole: req.user?.role,
+        viewType: productQuery.createdBy ? 'personal' : 'system',
+        accessedVia: req.path
+      }
     });
 
   } catch (error) {
@@ -276,20 +362,25 @@ exports.getProductAnalytics = async (req, res) => {
 
 // @desc    Get inventory analytics
 // @route   GET /api/analytics/inventory
-// @access  Private/Admin
+// @route   GET /api/analytics/user/inventory
+// @route   GET /api/analytics/admin/inventory
+// @access  Private
 exports.getInventoryAnalytics = async (req, res) => {
   try {
     console.log('📦 Fetching inventory analytics...');
-    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    console.log('📍 Path:', req.path);
 
     // Build base query
     let productQuery = { isActive: true };
     
-    // Add user filter if present
-    productQuery = addUserFilterToQuery(req, productQuery, 'createdBy');
+    // Add user filter - automatic based on user role and route
+    addUserFilterToQuery(req, productQuery, 'createdBy');
 
     console.log(`🔍 Inventory Query:`, { 
-      createdBy: req.query.createdBy
+      createdBy: productQuery.createdBy ? 'Filtered by creator' : 'No filter (admin system view)',
+      userRole: req.user?.role,
+      path: req.path
     });
 
     const inventoryStats = await Product.aggregate([
@@ -318,13 +409,13 @@ exports.getInventoryAnalytics = async (req, res) => {
     .limit(20)
     .lean();
 
-    // Stock movement trends with user filter
+    // Stock movement trends with user filter - FIXED QUERY
     const stockMovement = await Product.aggregate([
       { $match: productQuery },
       { $unwind: '$stockHistory' },
       {
         $match: {
-          'stockHistory.createdAt': {
+          'stockHistory.date': {
             $gte: new Date(new Date().setDate(new Date().getDate() - 30))
           }
         }
@@ -332,7 +423,7 @@ exports.getInventoryAnalytics = async (req, res) => {
       {
         $group: {
           _id: {
-            $dateToString: { format: '%Y-%m-%d', date: '$stockHistory.createdAt' }
+            $dateToString: { format: '%Y-%m-%d', date: '$stockHistory.date' }
           },
           restocks: {
             $sum: {
@@ -368,6 +459,13 @@ exports.getInventoryAnalytics = async (req, res) => {
       alerts: {
         lowStockCount: lowStockProducts.length,
         outOfStockCount: await Product.countDocuments({ ...productQuery, stock: 0 })
+      },
+      filterInfo: {
+        isFiltered: !!productQuery.createdBy,
+        userId: productQuery.createdBy || null,
+        userRole: req.user?.role,
+        viewType: productQuery.createdBy ? 'personal' : 'system',
+        accessedVia: req.path
       }
     });
 
@@ -383,15 +481,18 @@ exports.getInventoryAnalytics = async (req, res) => {
 
 // @desc    Get performance metrics
 // @route   GET /api/analytics/performance
-// @access  Private/Admin
+// @route   GET /api/analytics/user/performance
+// @route   GET /api/analytics/admin/performance
+// @access  Private
 exports.getPerformanceMetrics = async (req, res) => {
   try {
     const { period = 'week' } = req.query;
 
     console.log(`🚀 Fetching performance metrics for period: ${period}`);
-    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    console.log('📍 Path:', req.path);
 
-    // Build base query for sales
+    // Build sales query
     let salesQuery = {
       status: 'completed'
     };
@@ -399,13 +500,15 @@ exports.getPerformanceMetrics = async (req, res) => {
     // Add date range filter
     salesQuery = addDateRangeFilter(period, salesQuery);
     
-    // Add user filter if present
-    salesQuery = addUserFilterToQuery(req, salesQuery, 'soldBy');
+    // Add user filter for sales - automatic based on user role and route
+    addUserFilterToQuery(req, salesQuery, 'soldBy');
 
-    console.log(`🔍 Performance Query:`, { 
+    console.log(`🔍 Performance Query - Sales:`, { 
       period,
-      soldBy: req.query.soldBy,
-      dateRange: salesQuery.createdAt 
+      soldBy: salesQuery.soldBy ? 'Filtered by seller' : 'No filter (admin system view)',
+      dateRange: salesQuery.createdAt,
+      userRole: req.user?.role,
+      path: req.path
     });
 
     // Sales performance with user filter
@@ -425,9 +528,17 @@ exports.getPerformanceMetrics = async (req, res) => {
       }
     ]);
 
-    // Build base query for products
+    // Build product query
     let productQuery = { isActive: true };
-    productQuery = addUserFilterToQuery(req, productQuery, 'createdBy');
+    
+    // Add user filter for products - automatic based on user role and route
+    addUserFilterToQuery(req, productQuery, 'createdBy');
+
+    console.log(`🔍 Performance Query - Products:`, { 
+      createdBy: productQuery.createdBy ? 'Filtered by creator' : 'No filter (admin system view)',
+      userRole: req.user?.role,
+      path: req.path
+    });
 
     // Product performance with user filter
     const productPerformance = await Product.aggregate([
@@ -515,6 +626,13 @@ exports.getPerformanceMetrics = async (req, res) => {
         products: productData,
         inventory: inventoryData,
         overallScore: calculateOverallScore(salesData, productData, inventoryData)
+      },
+      filterInfo: {
+        salesFiltered: !!salesQuery.soldBy,
+        productsFiltered: !!productQuery.createdBy,
+        userRole: req.user?.role,
+        viewType: (salesQuery.soldBy || productQuery.createdBy) ? 'personal' : 'system',
+        accessedVia: req.path
       }
     });
 
@@ -530,7 +648,9 @@ exports.getPerformanceMetrics = async (req, res) => {
 
 // @desc    Get daily performance
 // @route   GET /api/analytics/daily-performance
-// @access  Private/Admin
+// @route   GET /api/analytics/user/daily-performance
+// @route   GET /api/analytics/admin/daily-performance
+// @access  Private
 exports.getDailyPerformance = async (req, res) => {
   try {
     const { date } = req.query;
@@ -540,25 +660,30 @@ exports.getDailyPerformance = async (req, res) => {
     nextDay.setDate(nextDay.getDate() + 1);
 
     console.log(`📅 Fetching daily performance for: ${targetDate.toDateString()}`);
-    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    console.log('📍 Path:', req.path);
 
-    // Build base query
+    // Build sales query
     let salesQuery = {
       createdAt: { $gte: targetDate, $lt: nextDay },
       status: 'completed'
     };
     
-    // Add user filter if present
-    salesQuery = addUserFilterToQuery(req, salesQuery, 'soldBy');
+    // Add user filter for sales - automatic based on user role and route
+    addUserFilterToQuery(req, salesQuery, 'soldBy');
 
     // Build product query
     let productQuery = { isActive: true };
-    productQuery = addUserFilterToQuery(req, productQuery, 'createdBy');
+    
+    // Add user filter for products - automatic based on user role and route
+    addUserFilterToQuery(req, productQuery, 'createdBy');
 
     console.log(`🔍 Daily Performance Query:`, { 
       date: targetDate.toISOString().split('T')[0],
-      soldBy: req.query.soldBy,
-      createdBy: req.query.createdBy
+      soldBy: salesQuery.soldBy ? 'Filtered' : 'No filter',
+      createdBy: productQuery.createdBy ? 'Filtered' : 'No filter',
+      userRole: req.user?.role,
+      path: req.path
     });
 
     // Daily sales with user filter
@@ -616,7 +741,7 @@ exports.getDailyPerformance = async (req, res) => {
       { $unwind: '$stockHistory' },
       {
         $match: {
-          'stockHistory.createdAt': { $gte: targetDate, $lt: nextDay }
+          'stockHistory.date': { $gte: targetDate, $lt: nextDay }
         }
       },
       {
@@ -628,7 +753,7 @@ exports.getDailyPerformance = async (req, res) => {
               type: '$stockHistory.type',
               unitsChanged: '$stockHistory.unitsChanged',
               notes: '$stockHistory.notes',
-              time: '$stockHistory.createdAt'
+              time: '$stockHistory.date'
             }
           }
         }
@@ -655,6 +780,13 @@ exports.getDailyPerformance = async (req, res) => {
         day: targetDate.toLocaleDateString('en-US', { weekday: 'long' }),
         isToday: isToday(targetDate),
         performanceRating: rateDailyPerformance(dailyData)
+      },
+      filterInfo: {
+        salesFiltered: !!salesQuery.soldBy,
+        productsFiltered: !!productQuery.createdBy,
+        userRole: req.user?.role,
+        viewType: salesQuery.soldBy || productQuery.createdBy ? 'personal' : 'system',
+        accessedVia: req.path
       }
     });
 
@@ -670,23 +802,28 @@ exports.getDailyPerformance = async (req, res) => {
 
 // @desc    Get product tracking data
 // @route   GET /api/analytics/product-tracking
-// @access  Private/Admin
+// @route   GET /api/analytics/user/product-tracking
+// @route   GET /api/analytics/admin/product-tracking
+// @access  Private
 exports.getProductTracking = async (req, res) => {
   try {
     const { limit = 10 } = req.query;
 
     console.log(`👀 Fetching product tracking data, limit: ${limit}`);
-    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    console.log('📍 Path:', req.path);
 
     // Build base query
     let productQuery = { isActive: true };
     
-    // Add user filter if present
-    productQuery = addUserFilterToQuery(req, productQuery, 'createdBy');
+    // Add user filter - automatic based on user role and route
+    addUserFilterToQuery(req, productQuery, 'createdBy');
 
     console.log(`🔍 Product Tracking Query:`, { 
       limit,
-      createdBy: req.query.createdBy
+      createdBy: productQuery.createdBy ? 'Filtered by creator' : 'No filter (admin system view)',
+      userRole: req.user?.role,
+      path: req.path
     });
 
     const products = await Product.find(productQuery)
@@ -765,6 +902,13 @@ exports.getProductTracking = async (req, res) => {
         healthyStock: trackingData.filter(p => p.inventory.status === 'healthy').length,
         lowStock: trackingData.filter(p => p.inventory.status === 'low-stock').length,
         outOfStock: trackingData.filter(p => p.inventory.status === 'out-of-stock').length
+      },
+      filterInfo: {
+        isFiltered: !!productQuery.createdBy,
+        userId: productQuery.createdBy || null,
+        userRole: req.user?.role,
+        viewType: productQuery.createdBy ? 'personal' : 'system',
+        accessedVia: req.path
       }
     });
 
@@ -778,268 +922,7 @@ exports.getProductTracking = async (req, res) => {
   }
 };
 
-// ADMIN-SPECIFIC VERSIONS (for personal view)
-
-// @desc    Get admin's personal sales overview analytics
-// @route   GET /api/analytics/admin/sales-overview
-// @access  Private/Admin
-exports.getAdminSalesOverview = async (req, res) => {
-  try {
-    const { period = 'week' } = req.query;
-    
-    console.log(`📊 [ADMIN PERSONAL] Fetching sales overview for period: ${period}`);
-    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
-
-    // Build base query - always filter by current admin
-    let baseQuery = {
-      status: 'completed',
-      soldBy: req.user._id // Always filter by current admin
-    };
-    
-    // Add date range filter
-    baseQuery = addDateRangeFilter(period, baseQuery);
-
-    console.log(`🔍 [ADMIN PERSONAL] Sales Overview Query:`, { 
-      period,
-      soldBy: req.user._id,
-      dateRange: baseQuery.createdAt 
-    });
-
-    // Sales statistics
-    const salesStats = await Sale.aggregate([
-      {
-        $match: baseQuery
-      },
-      {
-        $group: {
-          _id: null,
-          totalSales: { $sum: 1 },
-          totalRevenue: { $sum: '$totalAmount' },
-          totalProfit: { $sum: '$totalProfit' },
-          totalItemsSold: { $sum: { $sum: '$items.quantity' } },
-          averageSale: { $avg: '$totalAmount' }
-        }
-      }
-    ]);
-
-    const result = salesStats[0] || {
-      totalSales: 0,
-      totalRevenue: 0,
-      totalProfit: 0,
-      totalItemsSold: 0,
-      averageSale: 0
-    };
-
-    console.log(`✅ [ADMIN PERSONAL] Sales overview fetched for ${period} - ${result.totalSales} sales`);
-
-    res.json({
-      success: true,
-      period,
-      overview: result,
-      isPersonalView: true,
-      adminId: req.user._id
-    });
-
-  } catch (error) {
-    console.error('❌ [ADMIN PERSONAL] Get sales overview error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching admin sales overview',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Get admin's personal product analytics
-// @route   GET /api/analytics/admin/product-analytics
-// @access  Private/Admin
-exports.getAdminProductAnalytics = async (req, res) => {
-  try {
-    console.log(`📈 [ADMIN PERSONAL] Fetching product analytics`);
-    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
-
-    // Build base query - always filter by current admin
-    let productQuery = { 
-      isActive: true,
-      createdBy: req.user._id // Always filter by current admin
-    };
-
-    console.log(`🔍 [ADMIN PERSONAL] Product Analytics Query:`, { 
-      createdBy: req.user._id
-    });
-
-    // Get product statistics
-    const productStats = await Product.aggregate([
-      { $match: productQuery },
-      {
-        $group: {
-          _id: null,
-          totalProducts: { $sum: 1 },
-          totalValue: { $sum: { $multiply: ['$purchasePrice', '$stock'] } },
-          totalRevenue: { $sum: { $multiply: ['$sellingPrice', '$totalSold'] } },
-          totalCost: { $sum: { $multiply: ['$purchasePrice', '$totalSold'] } },
-          totalProfit: { 
-            $sum: { 
-              $multiply: [
-                { $subtract: ['$sellingPrice', '$purchasePrice'] }, 
-                '$totalSold'
-              ] 
-            } 
-          },
-          outOfStock: {
-            $sum: { $cond: [{ $eq: ['$stock', 0] }, 1, 0] }
-          },
-          lowStock: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $gt: ['$stock', 0] },
-                    { $lte: ['$stock', '$lowStockAlert'] }
-                  ]
-                },
-                1,
-                0
-              ]
-            }
-          }
-        }
-      }
-    ]);
-
-    const stats = productStats[0] || {
-      totalProducts: 0,
-      totalValue: 0,
-      totalRevenue: 0,
-      totalCost: 0,
-      totalProfit: 0,
-      outOfStock: 0,
-      lowStock: 0
-    };
-
-    console.log(`✅ [ADMIN PERSONAL] Product analytics fetched - ${stats.totalProducts} products`);
-
-    res.json({
-      success: true,
-      stats,
-      isPersonalView: true,
-      adminId: req.user._id
-    });
-
-  } catch (error) {
-    console.error('❌ [ADMIN PERSONAL] Get product analytics error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching admin product analytics',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Get admin's personal performance metrics
-// @route   GET /api/analytics/admin/performance
-// @access  Private/Admin
-exports.getAdminPerformance = async (req, res) => {
-  try {
-    const { period = 'week' } = req.query;
-
-    console.log(`🚀 [ADMIN PERSONAL] Fetching performance metrics for period: ${period}`);
-    console.log('👤 User ID:', req.user ? req.user._id : 'No user');
-
-    // Build base query for sales - always filter by current admin
-    let salesQuery = {
-      status: 'completed',
-      soldBy: req.user._id // Always filter by current admin
-    };
-    
-    // Add date range filter
-    salesQuery = addDateRangeFilter(period, salesQuery);
-
-    console.log(`🔍 [ADMIN PERSONAL] Performance Query:`, { 
-      period,
-      soldBy: req.user._id,
-      dateRange: salesQuery.createdAt 
-    });
-
-    // Sales performance
-    const salesPerformance = await Sale.aggregate([
-      {
-        $match: salesQuery
-      },
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: '$totalAmount' },
-          totalProfit: { $sum: '$totalProfit' },
-          totalSales: { $sum: 1 },
-          averageSaleValue: { $avg: '$totalAmount' },
-          averageProfitPerSale: { $avg: '$totalProfit' }
-        }
-      }
-    ]);
-
-    // Build base query for products - always filter by current admin
-    let productQuery = { 
-      isActive: true,
-      createdBy: req.user._id // Always filter by current admin
-    };
-
-    // Product performance
-    const productPerformance = await Product.aggregate([
-      { $match: productQuery },
-      {
-        $group: {
-          _id: null,
-          averageProfitMargin: {
-            $avg: {
-              $cond: [
-                { $gt: ['$sellingPrice', 0] },
-                { $multiply: [{ $divide: [{ $subtract: ['$sellingPrice', '$purchasePrice'] }, '$sellingPrice'] }, 100] },
-                0
-              ]
-            }
-          }
-        }
-      }
-    ]);
-
-    const salesData = salesPerformance[0] || {
-      totalRevenue: 0,
-      totalProfit: 0,
-      totalSales: 0,
-      averageSaleValue: 0,
-      averageProfitPerSale: 0
-    };
-
-    const productData = productPerformance[0] || {
-      averageProfitMargin: 0
-    };
-
-    console.log(`✅ [ADMIN PERSONAL] Performance metrics fetched - ${salesData.totalSales} sales`);
-
-    res.json({
-      success: true,
-      period,
-      metrics: {
-        sales: salesData,
-        products: productData,
-        overallScore: calculateOverallScore(salesData, productData, { stockoutRate: 0 })
-      },
-      isPersonalView: true,
-      adminId: req.user._id
-    });
-
-  } catch (error) {
-    console.error('❌ [ADMIN PERSONAL] Get performance metrics error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching admin performance metrics',
-      error: error.message
-    });
-  }
-};
-
-// Helper functions (unchanged)
+// Helper functions
 function calculateOverallScore(sales, products, inventory) {
   const salesScore = sales.totalRevenue > 1000 ? 100 : (sales.totalRevenue / 1000) * 100;
   const profitScore = products.averageProfitMargin || 0;
