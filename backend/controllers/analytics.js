@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 
 // Helper function to add user filter based on route and user role
 const addUserFilterToQuery = (req, query, fieldName = 'soldBy') => {
-  console.log(`🔍 Analytics: Path=${req.path}, User=${req.user?.name} (${req.user?.role})`);
+  console.log(`🔍 Analytics Filter - Path: ${req.path}, User: ${req.user?.name} (${req.user?.role})`);
   
   // Always filter for non-admin users
   if (req.user && req.user._id && req.user.role !== 'admin') {
@@ -14,20 +14,34 @@ const addUserFilterToQuery = (req, query, fieldName = 'soldBy') => {
     return query;
   }
   
-  // For admin users, check route to determine view
+  // For admin users, check route and query parameters to determine view
   if (req.user && req.user._id && req.user.role === 'admin') {
+    // Check query parameter first for explicit view preference
+    const viewParam = req.query.view;
+    const isExplicitPersonalView = viewParam === 'personal' || viewParam === 'my';
+    const isExplicitSystemView = viewParam === 'system' || viewParam === 'all';
+    
     // Determine if this is a personal view route
-    const isPersonalView = req.path.includes('/user/') || 
+    const isPersonalRoute = req.path.includes('/user/') || 
                           req.path.includes('/admin/') ||
                           req.path.includes('/my/');
     
-    if (isPersonalView) {
+    // Decision logic with priority: query param > route > default system view
+    if (isExplicitPersonalView || (isPersonalRoute && !isExplicitSystemView)) {
       // Admin personal view - filter to their data
       query[fieldName] = req.user._id;
-      console.log(`🔍 [ADMIN PERSONAL] Filtering by ${fieldName}: ${req.user._id}`);
-    } else {
+      console.log(`🔍 [ADMIN PERSONAL VIEW] Filtering by ${fieldName}: ${req.user._id}`);
+    } else if (isExplicitSystemView) {
       // Admin system view - no filter (sees all)
-      console.log(`🔍 [ADMIN SYSTEM] No filter - seeing all data`);
+      console.log(`🔍 [ADMIN SYSTEM VIEW] No filter - showing all data`);
+    } else {
+      // Default behavior based on route
+      if (isPersonalRoute) {
+        query[fieldName] = req.user._id;
+        console.log(`🔍 [ADMIN PERSONAL ROUTE] Filtering by ${fieldName}: ${req.user._id}`);
+      } else {
+        console.log(`🔍 [ADMIN SYSTEM DEFAULT] No filter - showing all data`);
+      }
     }
   }
   
@@ -51,6 +65,9 @@ const addDateRangeFilter = (period, query) => {
     case 'year':
       startDate = new Date().setFullYear(new Date().getFullYear() - 1);
       break;
+    case 'all':
+      // No date filter for 'all' period
+      return query;
     default:
       startDate = new Date().setHours(0, 0, 0, 0);
   }
@@ -62,43 +79,71 @@ const addDateRangeFilter = (period, query) => {
 // Get consolidated analytics data (for frontend)
 exports.getMyAnalytics = async (req, res) => {
   try {
-    const { period = 'week', limit = 8 } = req.query;
+    const { period = 'week', limit = 8, view = 'auto' } = req.query;
     
-    console.log(`📊 Consolidated Analytics - Path: ${req.path}, User: ${req.user?.name}, Period: ${period}`);
+    console.log(`📊 CONSOLIDATED ANALYTICS - User: ${req.user?.name} (${req.user?.role}), Period: ${period}, View param: ${view}`);
+    console.log(`🔍 Path analysis: ${req.path}`);
 
-    // Determine if this is personal view
-    const isPersonalView = req.path.includes('/user/') || 
+    // Build base queries
+    let salesQuery = { status: 'completed' };
+    let productQuery = { isActive: true };
+    
+    // Add date range to sales query
+    salesQuery = addDateRangeFilter(period, salesQuery);
+    
+    // Apply user filtering with improved logic
+    // 1. Non-admin users: Always filter to their data
+    // 2. Admin users: Use query param > route analysis > default behavior
+    
+    const userId = req.user?._id;
+    const userRole = req.user?.role;
+    
+    // Analyze route for personal/system view indication
+    const isPersonalRoute = req.path.includes('/user/') || 
                           req.path.includes('/admin/') ||
                           req.path.includes('/my/');
     
-    // Build sales query
-    let salesQuery = { status: 'completed' };
-    salesQuery = addDateRangeFilter(period, salesQuery);
+    // Determine view type based on multiple factors
+    let viewType = 'system'; // default for admin
+    let isPersonalView = false;
     
-    // Build product query
-    let productQuery = { isActive: true };
-    
-    // Apply user filtering for personal view or non-admin users
-    if (req.user && req.user._id) {
-      if (req.user.role !== 'admin') {
-        // Non-admin: always personal view
-        salesQuery.soldBy = req.user._id;
-        productQuery.createdBy = req.user._id;
-      } else if (isPersonalView) {
-        // Admin in personal view: filter to their data
-        salesQuery.soldBy = req.user._id;
-        productQuery.createdBy = req.user._id;
+    if (userRole !== 'admin') {
+      // Non-admin: Always personal view
+      isPersonalView = true;
+      viewType = 'personal';
+      salesQuery.soldBy = userId;
+      productQuery.createdBy = userId;
+      console.log(`👤 Non-admin user - filtering to personal data`);
+    } else {
+      // Admin: Complex decision logic
+      if (view === 'personal' || view === 'my') {
+        // Explicit personal view requested
+        isPersonalView = true;
+        viewType = 'personal';
+        salesQuery.soldBy = userId;
+        productQuery.createdBy = userId;
+        console.log(`👑 Admin - explicit personal view requested`);
+      } else if (view === 'system' || view === 'all') {
+        // Explicit system view requested
+        isPersonalView = false;
+        viewType = 'system';
+        console.log(`👑 Admin - explicit system view requested`);
+      } else if (isPersonalRoute) {
+        // Personal route detected
+        isPersonalView = true;
+        viewType = 'personal';
+        salesQuery.soldBy = userId;
+        productQuery.createdBy = userId;
+        console.log(`👑 Admin - personal route detected`);
+      } else {
+        // Default: System view for analytics dashboard
+        isPersonalView = false;
+        viewType = 'system';
+        console.log(`👑 Admin - default system view for analytics`);
       }
-      // Admin in system view: no filter (sees all)
     }
-
-    console.log(`🔍 Consolidated Query:`, { 
-      period,
-      isPersonalView,
-      userRole: req.user?.role,
-      salesFiltered: !!salesQuery.soldBy,
-      productsFiltered: !!productQuery.createdBy
-    });
+    
+    console.log(`🔍 Final filters - View type: ${viewType}, Sales filtered: ${!!salesQuery.soldBy}, Products filtered: ${!!productQuery.createdBy}`);
 
     // ============================================
     // 1. SALES OVERVIEW
@@ -353,7 +398,7 @@ exports.getMyAnalytics = async (req, res) => {
     });
 
     // ============================================
-    // 8. RESPONSE
+    // 8. COMPILE RESPONSE
     // ============================================
     const consolidatedData = {
       salesOverview,
@@ -365,26 +410,34 @@ exports.getMyAnalytics = async (req, res) => {
       productTracking
     };
 
-    console.log(`✅ Consolidated analytics: ${productAnalytics.totalProducts} products, ${salesOverview.totalSales} sales`);
+    console.log(`✅ ANALYTICS COMPLETE - Products: ${productAnalytics.totalProducts}, Sales: ${salesOverview.totalSales}`);
+    console.log(`🔍 VIEW SUMMARY - Type: ${viewType}, User: ${req.user?.name}, Period: ${period}`);
 
     res.json({
       success: true,
       period,
       ...consolidatedData,
       filterInfo: {
-        isPersonalView: !!salesQuery.soldBy,
-        userRole: req.user?.role,
+        isPersonalView,
+        userRole: userRole,
         userId: salesQuery.soldBy || null,
-        viewType: salesQuery.soldBy ? 'personal' : 'system'
+        viewType,
+        currentUserId: userId,
+        period,
+        routePath: req.path,
+        queryViewParam: view,
+        totalDataPoints: productAnalytics.totalProducts + salesOverview.totalSales
       }
     });
 
   } catch (error) {
-    console.error('❌ Consolidated analytics error:', error);
+    console.error('❌ ANALYTICS ERROR:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while fetching consolidated analytics',
-      error: error.message
+      error: error.message,
+      path: req.path,
+      userId: req.user?._id
     });
   }
 };
@@ -392,9 +445,9 @@ exports.getMyAnalytics = async (req, res) => {
 // Get sales overview analytics (standalone)
 exports.getSalesOverview = async (req, res) => {
   try {
-    const { period = 'week' } = req.query;
+    const { period = 'week', view = 'auto' } = req.query;
     
-    console.log(`📊 Sales Overview - Path: ${req.path}, User: ${req.user?.name}`);
+    console.log(`📊 SALES OVERVIEW - User: ${req.user?.name}, Period: ${period}, View: ${view}`);
 
     // Build base query
     let baseQuery = { status: 'completed' };
@@ -402,14 +455,26 @@ exports.getSalesOverview = async (req, res) => {
     // Add date range
     baseQuery = addDateRangeFilter(period, baseQuery);
     
-    // Add user filter
-    addUserFilterToQuery(req, baseQuery, 'soldBy');
-
-    console.log(`🔍 Query:`, { 
-      period,
-      soldBy: baseQuery.soldBy ? 'Filtered' : 'All data',
-      userRole: req.user?.role
-    });
+    // Apply user filtering
+    const userId = req.user?._id;
+    const userRole = req.user?.role;
+    let isPersonalView = false;
+    
+    if (userRole !== 'admin') {
+      baseQuery.soldBy = userId;
+      isPersonalView = true;
+    } else {
+      if (view === 'personal' || view === 'my') {
+        baseQuery.soldBy = userId;
+        isPersonalView = true;
+      } else if (view === 'system' || view === 'all') {
+        isPersonalView = false;
+      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
+        baseQuery.soldBy = userId;
+        isPersonalView = true;
+      }
+      // Default: no filter (system view)
+    }
 
     // Get sales statistics
     const salesStats = await Sale.aggregate([
@@ -434,17 +499,18 @@ exports.getSalesOverview = async (req, res) => {
       averageSale: 0
     };
 
-    console.log(`✅ Sales overview: ${result.totalSales} sales`);
+    console.log(`✅ Sales overview: ${result.totalSales} sales, Revenue: ${result.totalRevenue}`);
 
     res.json({
       success: true,
       period,
       overview: result,
       filterInfo: {
-        isFiltered: !!baseQuery.soldBy,
+        isPersonalView,
+        userRole,
         userId: baseQuery.soldBy || null,
-        userRole: req.user?.role,
-        viewType: baseQuery.soldBy ? 'personal' : 'system'
+        viewType: isPersonalView ? 'personal' : 'system',
+        period
       }
     });
 
@@ -461,18 +527,32 @@ exports.getSalesOverview = async (req, res) => {
 // Get product analytics (standalone)
 exports.getProductAnalytics = async (req, res) => {
   try {
-    console.log(`📈 Product Analytics - Path: ${req.path}, User: ${req.user?.name}`);
+    const { view = 'auto' } = req.query;
+    console.log(`📈 PRODUCT ANALYTICS - User: ${req.user?.name}, View: ${view}`);
 
     // Build query
     let productQuery = { isActive: true };
     
-    // Add user filter
-    addUserFilterToQuery(req, productQuery, 'createdBy');
-
-    console.log(`🔍 Query:`, { 
-      createdBy: productQuery.createdBy ? 'Filtered' : 'All data',
-      userRole: req.user?.role
-    });
+    // Apply user filtering
+    const userId = req.user?._id;
+    const userRole = req.user?.role;
+    let isPersonalView = false;
+    
+    if (userRole !== 'admin') {
+      productQuery.createdBy = userId;
+      isPersonalView = true;
+    } else {
+      if (view === 'personal' || view === 'my') {
+        productQuery.createdBy = userId;
+        isPersonalView = true;
+      } else if (view === 'system' || view === 'all') {
+        isPersonalView = false;
+      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
+        productQuery.createdBy = userId;
+        isPersonalView = true;
+      }
+      // Default: no filter (system view)
+    }
 
     // Get product statistics
     const productStats = await Product.aggregate([
@@ -523,17 +603,18 @@ exports.getProductAnalytics = async (req, res) => {
       lowStock: 0
     };
 
-    console.log(`✅ Product analytics: ${stats.totalProducts} products`);
+    console.log(`✅ Product analytics: ${stats.totalProducts} products, Profit: ${stats.totalProfit}`);
 
     res.json({
       success: true,
       stats,
       topProducts,
       filterInfo: {
-        isFiltered: !!productQuery.createdBy,
+        isPersonalView,
+        userRole,
         userId: productQuery.createdBy || null,
-        userRole: req.user?.role,
-        viewType: productQuery.createdBy ? 'personal' : 'system'
+        viewType: isPersonalView ? 'personal' : 'system',
+        productCount: stats.totalProducts
       }
     });
 
@@ -550,14 +631,31 @@ exports.getProductAnalytics = async (req, res) => {
 // Get inventory analytics (standalone)
 exports.getInventoryAnalytics = async (req, res) => {
   try {
-    console.log(`📦 Inventory Analytics - Path: ${req.path}, User: ${req.user?.name}`);
+    const { view = 'auto' } = req.query;
+    console.log(`📦 INVENTORY ANALYTICS - User: ${req.user?.name}, View: ${view}`);
 
     let productQuery = { isActive: true };
-    addUserFilterToQuery(req, productQuery, 'createdBy');
-
-    console.log(`🔍 Query:`, { 
-      createdBy: productQuery.createdBy ? 'Filtered' : 'All data'
-    });
+    
+    // Apply user filtering
+    const userId = req.user?._id;
+    const userRole = req.user?.role;
+    let isPersonalView = false;
+    
+    if (userRole !== 'admin') {
+      productQuery.createdBy = userId;
+      isPersonalView = true;
+    } else {
+      if (view === 'personal' || view === 'my') {
+        productQuery.createdBy = userId;
+        isPersonalView = true;
+      } else if (view === 'system' || view === 'all') {
+        isPersonalView = false;
+      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
+        productQuery.createdBy = userId;
+        isPersonalView = true;
+      }
+      // Default: no filter (system view)
+    }
 
     const inventoryStats = await Product.aggregate([
       { $match: productQuery },
@@ -583,16 +681,17 @@ exports.getInventoryAnalytics = async (req, res) => {
       totalItems: 0
     };
 
-    console.log(`✅ Inventory analytics: ${stats.totalProducts} products`);
+    console.log(`✅ Inventory analytics: ${stats.totalProducts} products, Stock value: ${stats.totalStockValue}`);
 
     res.json({
       success: true,
       stats,
       filterInfo: {
-        isFiltered: !!productQuery.createdBy,
+        isPersonalView,
+        userRole,
         userId: productQuery.createdBy || null,
-        userRole: req.user?.role,
-        viewType: productQuery.createdBy ? 'personal' : 'system'
+        viewType: isPersonalView ? 'personal' : 'system',
+        totalItems: stats.totalItems
       }
     });
 
@@ -609,24 +708,40 @@ exports.getInventoryAnalytics = async (req, res) => {
 // Get performance metrics (standalone)
 exports.getPerformanceMetrics = async (req, res) => {
   try {
-    const { period = 'week' } = req.query;
+    const { period = 'week', view = 'auto' } = req.query;
 
-    console.log(`🚀 Performance Metrics - Path: ${req.path}, User: ${req.user?.name}`);
+    console.log(`🚀 PERFORMANCE METRICS - User: ${req.user?.name}, Period: ${period}, View: ${view}`);
 
     // Sales query
     let salesQuery = { status: 'completed' };
     salesQuery = addDateRangeFilter(period, salesQuery);
-    addUserFilterToQuery(req, salesQuery, 'soldBy');
-
+    
     // Product query
     let productQuery = { isActive: true };
-    addUserFilterToQuery(req, productQuery, 'createdBy');
-
-    console.log(`🔍 Query:`, { 
-      period,
-      salesFiltered: !!salesQuery.soldBy,
-      productsFiltered: !!productQuery.createdBy
-    });
+    
+    // Apply user filtering
+    const userId = req.user?._id;
+    const userRole = req.user?.role;
+    let isPersonalView = false;
+    
+    if (userRole !== 'admin') {
+      salesQuery.soldBy = userId;
+      productQuery.createdBy = userId;
+      isPersonalView = true;
+    } else {
+      if (view === 'personal' || view === 'my') {
+        salesQuery.soldBy = userId;
+        productQuery.createdBy = userId;
+        isPersonalView = true;
+      } else if (view === 'system' || view === 'all') {
+        isPersonalView = false;
+      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
+        salesQuery.soldBy = userId;
+        productQuery.createdBy = userId;
+        isPersonalView = true;
+      }
+      // Default: no filter (system view)
+    }
 
     // Get sales performance
     const salesPerformance = await Sale.aggregate([
@@ -674,7 +789,7 @@ exports.getPerformanceMetrics = async (req, res) => {
       averageProfitMargin: 0
     };
 
-    console.log(`✅ Performance metrics: ${salesData.totalSales} sales`);
+    console.log(`✅ Performance metrics: ${salesData.totalSales} sales, Margin: ${productData.averageProfitMargin?.toFixed(1)}%`);
 
     res.json({
       success: true,
@@ -684,10 +799,10 @@ exports.getPerformanceMetrics = async (req, res) => {
         products: productData
       },
       filterInfo: {
-        salesFiltered: !!salesQuery.soldBy,
-        productsFiltered: !!productQuery.createdBy,
-        userRole: req.user?.role,
-        viewType: (salesQuery.soldBy || productQuery.createdBy) ? 'personal' : 'system'
+        isPersonalView,
+        userRole,
+        viewType: isPersonalView ? 'personal' : 'system',
+        period
       }
     });
 
@@ -704,20 +819,40 @@ exports.getPerformanceMetrics = async (req, res) => {
 // Get daily performance (standalone)
 exports.getDailyPerformance = async (req, res) => {
   try {
-    const { date } = req.query;
+    const { date, view = 'auto' } = req.query;
     const targetDate = date ? new Date(date) : new Date();
     targetDate.setHours(0, 0, 0, 0);
     const nextDay = new Date(targetDate);
     nextDay.setDate(nextDay.getDate() + 1);
 
-    console.log(`📅 Daily Performance - Date: ${targetDate.toDateString()}, User: ${req.user?.name}`);
+    console.log(`📅 DAILY PERFORMANCE - Date: ${targetDate.toDateString()}, User: ${req.user?.name}, View: ${view}`);
 
     // Sales query
     let salesQuery = {
       createdAt: { $gte: targetDate, $lt: nextDay },
       status: 'completed'
     };
-    addUserFilterToQuery(req, salesQuery, 'soldBy');
+    
+    // Apply user filtering
+    const userId = req.user?._id;
+    const userRole = req.user?.role;
+    let isPersonalView = false;
+    
+    if (userRole !== 'admin') {
+      salesQuery.soldBy = userId;
+      isPersonalView = true;
+    } else {
+      if (view === 'personal' || view === 'my') {
+        salesQuery.soldBy = userId;
+        isPersonalView = true;
+      } else if (view === 'system' || view === 'all') {
+        isPersonalView = false;
+      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
+        salesQuery.soldBy = userId;
+        isPersonalView = true;
+      }
+      // Default: no filter (system view)
+    }
 
     // Get daily sales
     const dailySales = await Sale.aggregate([
@@ -742,7 +877,7 @@ exports.getDailyPerformance = async (req, res) => {
       averageSaleValue: 0
     };
 
-    console.log(`✅ Daily performance: ${dailyData.totalSales} sales`);
+    console.log(`✅ Daily performance: ${dailyData.totalSales} sales, Revenue: ${dailyData.totalRevenue}`);
 
     res.json({
       success: true,
@@ -754,9 +889,10 @@ exports.getDailyPerformance = async (req, res) => {
         performanceRating: rateDailyPerformance(dailyData)
       },
       filterInfo: {
-        salesFiltered: !!salesQuery.soldBy,
-        userRole: req.user?.role,
-        viewType: salesQuery.soldBy ? 'personal' : 'system'
+        isPersonalView,
+        userRole,
+        viewType: isPersonalView ? 'personal' : 'system',
+        date: targetDate.toISOString().split('T')[0]
       }
     });
 
@@ -773,16 +909,32 @@ exports.getDailyPerformance = async (req, res) => {
 // Get product tracking (standalone)
 exports.getProductTracking = async (req, res) => {
   try {
-    const { limit = 10 } = req.query;
+    const { limit = 10, view = 'auto' } = req.query;
 
-    console.log(`👀 Product Tracking - User: ${req.user?.name}`);
+    console.log(`👀 PRODUCT TRACKING - User: ${req.user?.name}, View: ${view}`);
 
     let productQuery = { isActive: true };
-    addUserFilterToQuery(req, productQuery, 'createdBy');
-
-    console.log(`🔍 Query:`, { 
-      createdBy: productQuery.createdBy ? 'Filtered' : 'All data'
-    });
+    
+    // Apply user filtering
+    const userId = req.user?._id;
+    const userRole = req.user?.role;
+    let isPersonalView = false;
+    
+    if (userRole !== 'admin') {
+      productQuery.createdBy = userId;
+      isPersonalView = true;
+    } else {
+      if (view === 'personal' || view === 'my') {
+        productQuery.createdBy = userId;
+        isPersonalView = true;
+      } else if (view === 'system' || view === 'all') {
+        isPersonalView = false;
+      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
+        productQuery.createdBy = userId;
+        isPersonalView = true;
+      }
+      // Default: no filter (system view)
+    }
 
     const products = await Product.find(productQuery)
       .select('name brand sellingPrice purchasePrice stock totalSold originalQuantity restockedQuantity lowStockAlert category createdBy')
@@ -840,10 +992,11 @@ exports.getProductTracking = async (req, res) => {
       count: trackingData.length,
       products: trackingData,
       filterInfo: {
-        isFiltered: !!productQuery.createdBy,
+        isPersonalView,
+        userRole,
         userId: productQuery.createdBy || null,
-        userRole: req.user?.role,
-        viewType: productQuery.createdBy ? 'personal' : 'system'
+        viewType: isPersonalView ? 'personal' : 'system',
+        productCount: trackingData.length
       }
     });
 
