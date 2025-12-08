@@ -73,7 +73,29 @@ exports.createSale = async (req, res) => {
   session.startTransaction();
 
   try {
-    const { customer, items, discountAmount = 0, taxAmount = 0, paymentMethod, amountPaid, notes } = req.body;
+    // ✅ SECURITY FIX: Extract and validate ownership fields
+    const { soldBy, createdBy, ...safeData } = req.body;
+    
+    // CRITICAL SECURITY: Prevent users from creating sales for other users
+    if (soldBy && soldBy !== req.user.id && req.user.role !== 'admin') {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'You cannot create sales for other users'
+      });
+    }
+    
+    if (createdBy && createdBy !== req.user.id && req.user.role !== 'admin') {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'You cannot set createdBy to another user'
+      });
+    }
+
+    const { customer, items, discountAmount = 0, taxAmount = 0, paymentMethod, amountPaid, notes } = safeData;
 
     // Validate required fields
     if (!customer || !customer.name) {
@@ -190,7 +212,7 @@ exports.createSale = async (req, res) => {
     const totalProfit = totalAmount - totalCost;
     const paymentStatus = amountPaid >= totalAmount ? 'paid' : amountPaid > 0 ? 'partially_paid' : 'pending';
 
-    // Create sale
+    // ✅ SECURITY FIX: Create sale with enforced ownership
     const sale = new Sale({
       saleNumber,
       customer,
@@ -206,8 +228,9 @@ exports.createSale = async (req, res) => {
       amountPaid: amountPaid || totalAmount,
       balance: totalAmount - (amountPaid || totalAmount),
       notes,
-      soldBy: req.user.id,
-      createdBy: req.user.id
+      // CRITICAL: Force current user ownership for non-admins
+      soldBy: req.user.role === 'admin' ? (soldBy || req.user.id) : req.user.id,
+      createdBy: req.user.role === 'admin' ? (createdBy || req.user.id) : req.user.id
     });
 
     await sale.save({ session });
@@ -393,8 +416,24 @@ exports.getSale = async (req, res) => {
 // @access  Private
 exports.updatePayment = async (req, res) => {
   try {
-    const { amountPaid, paymentMethod } = req.body;
+    // ✅ SECURITY FIX: Extract and validate ownership fields
+    const { amountPaid, paymentMethod, soldBy, createdBy } = req.body;
     
+    // CRITICAL: Prevent users from changing sale ownership
+    if (soldBy && soldBy !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'You cannot change sale ownership'
+      });
+    }
+    
+    if (createdBy && createdBy !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'You cannot change createdBy field'
+      });
+    }
+
     console.log(`💰 Updating payment for sale: ${req.params.id} by user: ${req.user.name} (${req.user.role})`);
     
     const sale = await Sale.findById(req.params.id);
@@ -432,6 +471,12 @@ exports.updatePayment = async (req, res) => {
     
     if (paymentMethod) {
       sale.paymentMethod = paymentMethod;
+    }
+    
+    // ✅ SECURITY FIX: Only admin can change ownership fields
+    if (isAdmin) {
+      if (soldBy) sale.soldBy = soldBy;
+      if (createdBy) sale.createdBy = createdBy;
     }
     
     sale.updatedBy = req.user.id;
