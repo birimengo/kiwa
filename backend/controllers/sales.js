@@ -73,6 +73,12 @@ exports.createSale = async (req, res) => {
   session.startTransaction();
 
   try {
+    // ✅ Log the incoming request for debugging
+    console.log('🛒 [CREATE SALE] Request received from user:', req.user.name);
+    console.log('📍 Request body customer:', req.body.customer);
+    console.log('📍 Request body items count:', req.body.items?.length);
+    console.log('📍 First item sample:', req.body.items?.[0]);
+
     // ✅ SECURITY FIX: Extract and validate ownership fields
     const { soldBy, createdBy, ...safeData } = req.body;
     
@@ -97,7 +103,7 @@ exports.createSale = async (req, res) => {
 
     const { customer, items, discountAmount = 0, taxAmount = 0, paymentMethod, amountPaid, notes } = safeData;
 
-    // Validate required fields
+    // ✅ Enhanced validation
     if (!customer || !customer.name) {
       await session.abortTransaction();
       session.endSession();
@@ -116,8 +122,57 @@ exports.createSale = async (req, res) => {
       });
     }
 
+    // ✅ Validate each item has required fields
+    for (const [index, item] of items.entries()) {
+      if (!item.productId) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          success: false,
+          message: `Item ${index + 1} is missing productId`
+        });
+      }
+      
+      if (!item.quantity || item.quantity <= 0) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          success: false,
+          message: `Item ${index + 1} has invalid quantity: ${item.quantity}`
+        });
+      }
+      
+      if (!item.name) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          success: false,
+          message: `Item ${index + 1} is missing name`
+        });
+      }
+      
+      if (!item.brand) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(400).json({
+          success: false,
+          message: `Item ${index + 1} is missing brand`
+        });
+      }
+      
+      // Log each item for debugging
+      console.log(`📦 Item ${index + 1}:`, {
+        productId: item.productId,
+        name: item.name,
+        brand: item.brand,
+        quantity: item.quantity,
+        sellingPrice: item.sellingPrice,
+        unitPrice: item.unitPrice
+      });
+    }
+
     console.log(`🛒 Creating sale by user: ${req.user.name} (${req.user.role})`);
-    console.log('📍 Path:', req.path);
+    console.log(`📍 Items count: ${items.length}`);
 
     // Generate sale number
     const saleNumber = await generateSaleNumber();
@@ -128,9 +183,13 @@ exports.createSale = async (req, res) => {
     let totalCost = 0;
 
     for (const item of items) {
+      // Log the product lookup
+      console.log(`🔍 Looking up product: ${item.productId}`);
+      
       const product = await Product.findById(item.productId).session(session);
       
       if (!product) {
+        console.error(`❌ Product not found: ${item.productId}`);
         await session.abortTransaction();
         session.endSession();
         return res.status(404).json({
@@ -157,16 +216,25 @@ exports.createSale = async (req, res) => {
         });
       }
 
-      const unitPrice = item.unitPrice || product.sellingPrice;
-      const unitCost = product.purchasePrice;
+      // Use item price or fall back to product price
+      const unitPrice = item.unitPrice || item.sellingPrice || product.sellingPrice;
+      const unitCost = item.unitCost || item.purchasePrice || product.purchasePrice;
       const totalPrice = item.quantity * unitPrice;
       const itemTotalCost = item.quantity * unitCost;
       const profit = totalPrice - itemTotalCost;
 
+      console.log(`💰 Item pricing: ${product.name}`, {
+        unitPrice,
+        unitCost,
+        quantity: item.quantity,
+        totalPrice,
+        profit
+      });
+
       saleItems.push({
         product: product._id,
-        productName: product.name,
-        productBrand: product.brand,
+        productName: item.name || product.name,
+        productBrand: item.brand || product.brand,
         quantity: item.quantity,
         unitPrice,
         unitCost,
@@ -206,13 +274,26 @@ exports.createSale = async (req, res) => {
       });
 
       await product.save({ session });
+      
+      console.log(`📊 Stock updated for ${product.name}: ${previousStock} → ${newStock}`);
     }
 
     const totalAmount = subtotal - discountAmount + taxAmount;
     const totalProfit = totalAmount - totalCost;
     const paymentStatus = amountPaid >= totalAmount ? 'paid' : amountPaid > 0 ? 'partially_paid' : 'pending';
 
-    // ✅ SECURITY FIX: Create sale with enforced ownership
+    console.log(`🧮 Sale totals:`, {
+      subtotal,
+      discountAmount,
+      taxAmount,
+      totalAmount,
+      totalCost,
+      totalProfit,
+      amountPaid,
+      balance: totalAmount - (amountPaid || totalAmount)
+    });
+
+    // ✅ Create sale with enforced ownership
     const sale = new Sale({
       saleNumber,
       customer,
@@ -238,9 +319,11 @@ exports.createSale = async (req, res) => {
     // Update stock history with sale reference
     for (const item of sale.items) {
       const product = await Product.findById(item.product).session(session);
-      const stockEntry = product.stockHistory[product.stockHistory.length - 1];
-      stockEntry.reference = sale._id;
-      await product.save({ session });
+      if (product) {
+        const stockEntry = product.stockHistory[product.stockHistory.length - 1];
+        stockEntry.reference = sale._id;
+        await product.save({ session });
+      }
     }
 
     await session.commitTransaction();
@@ -249,7 +332,7 @@ exports.createSale = async (req, res) => {
     // Populate sale data
     await sale.populate('soldBy', 'name');
 
-    console.log(`✅ Sale created: ${saleNumber} by ${req.user.name}`);
+    console.log(`✅ Sale created successfully: ${saleNumber} by ${req.user.name}`);
 
     res.status(201).json({
       success: true,
@@ -268,7 +351,8 @@ exports.createSale = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while creating sale',
-      error: error.message
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
