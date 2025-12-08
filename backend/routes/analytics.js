@@ -1,3 +1,4 @@
+// routes/analytics.js
 const express = require('express');
 const { protect, authorize } = require('../middleware/auth');
 const {
@@ -14,8 +15,10 @@ const router = express.Router();
 router.use(protect);
 
 // ============================================
-// USER-SPECIFIC ANALYTICS (only their own data)
+// PERSONAL VIEW ROUTES (only user's own data)
 // ============================================
+
+// Regular users and admin personal view
 router.get('/user/sales-overview', getSalesOverview);
 router.get('/user/product-analytics', getProductAnalytics);
 router.get('/user/inventory', getInventoryAnalytics);
@@ -23,19 +26,7 @@ router.get('/user/performance', getPerformanceMetrics);
 router.get('/user/daily-performance', getDailyPerformance);
 router.get('/user/product-tracking', getProductTracking);
 
-// ============================================
-// ADMIN SYSTEM ANALYTICS (all data - default)
-// ============================================
-router.get('/sales/overview', authorize('admin'), getSalesOverview);
-router.get('/products', authorize('admin'), getProductAnalytics);
-router.get('/inventory', authorize('admin'), getInventoryAnalytics);
-router.get('/performance', authorize('admin'), getPerformanceMetrics);
-router.get('/daily-performance', authorize('admin'), getDailyPerformance);
-router.get('/product-tracking', authorize('admin'), getProductTracking);
-
-// ============================================
-// ADMIN PERSONAL ANALYTICS (their own data only)
-// ============================================
+// Admin personal view (same as user routes)
 router.get('/admin/sales-overview', authorize('admin'), getSalesOverview);
 router.get('/admin/product-analytics', authorize('admin'), getProductAnalytics);
 router.get('/admin/inventory', authorize('admin'), getInventoryAnalytics);
@@ -44,13 +35,14 @@ router.get('/admin/daily-performance', authorize('admin'), getDailyPerformance);
 router.get('/admin/product-tracking', authorize('admin'), getProductTracking);
 
 // ============================================
-// OPTIONAL: ADMIN QUERY PARAMETER VIEWS
+// ADMIN SYSTEM VIEW ROUTES (all data)
 // ============================================
-router.get('/my/sales-overview', authorize('admin'), getSalesOverview);
-router.get('/my/product-analytics', authorize('admin'), getProductAnalytics);
-router.get('/my/inventory', authorize('admin'), getInventoryAnalytics);
-router.get('/my/performance', authorize('admin'), getPerformanceMetrics);
-router.get('/my/daily-performance', authorize('admin'), getDailyPerformance);
-router.get('/my/product-tracking', authorize('admin'), getProductTracking);
+
+router.get('/sales/overview', authorize('admin'), getSalesOverview);
+router.get('/products', authorize('admin'), getProductAnalytics);
+router.get('/inventory', authorize('admin'), getInventoryAnalytics);
+router.get('/performance', authorize('admin'), getPerformanceMetrics);
+router.get('/daily-performance', authorize('admin'), getDailyPerformance);
+router.get('/product-tracking', authorize('admin'), getProductTracking);
 
 module.exports = router;
