@@ -59,7 +59,337 @@ const addDateRangeFilter = (period, query) => {
   return query;
 };
 
-// Get sales overview analytics
+// Get consolidated analytics data (for frontend)
+exports.getMyAnalytics = async (req, res) => {
+  try {
+    const { period = 'week', limit = 8 } = req.query;
+    
+    console.log(`📊 Consolidated Analytics - Path: ${req.path}, User: ${req.user?.name}, Period: ${period}`);
+
+    // Determine if this is personal view
+    const isPersonalView = req.path.includes('/user/') || 
+                          req.path.includes('/admin/') ||
+                          req.path.includes('/my/');
+    
+    // Build sales query
+    let salesQuery = { status: 'completed' };
+    salesQuery = addDateRangeFilter(period, salesQuery);
+    
+    // Build product query
+    let productQuery = { isActive: true };
+    
+    // Apply user filtering for personal view or non-admin users
+    if (req.user && req.user._id) {
+      if (req.user.role !== 'admin') {
+        // Non-admin: always personal view
+        salesQuery.soldBy = req.user._id;
+        productQuery.createdBy = req.user._id;
+      } else if (isPersonalView) {
+        // Admin in personal view: filter to their data
+        salesQuery.soldBy = req.user._id;
+        productQuery.createdBy = req.user._id;
+      }
+      // Admin in system view: no filter (sees all)
+    }
+
+    console.log(`🔍 Consolidated Query:`, { 
+      period,
+      isPersonalView,
+      userRole: req.user?.role,
+      salesFiltered: !!salesQuery.soldBy,
+      productsFiltered: !!productQuery.createdBy
+    });
+
+    // ============================================
+    // 1. SALES OVERVIEW
+    // ============================================
+    const salesStats = await Sale.aggregate([
+      { $match: salesQuery },
+      {
+        $group: {
+          _id: null,
+          totalSales: { $sum: 1 },
+          totalRevenue: { $sum: '$totalAmount' },
+          totalProfit: { $sum: '$totalProfit' },
+          totalItemsSold: { $sum: { $sum: '$items.quantity' } },
+          averageSale: { $avg: '$totalAmount' }
+        }
+      }
+    ]);
+
+    const salesOverview = salesStats[0] || {
+      totalSales: 0,
+      totalRevenue: 0,
+      totalProfit: 0,
+      totalItemsSold: 0,
+      averageSale: 0
+    };
+
+    // ============================================
+    // 2. PRODUCT ANALYTICS
+    // ============================================
+    const productAnalyticsAgg = await Product.aggregate([
+      { $match: productQuery },
+      {
+        $group: {
+          _id: null,
+          totalProducts: { $sum: 1 },
+          totalValue: { $sum: { $multiply: ['$purchasePrice', '$stock'] } },
+          totalRevenue: { $sum: { $multiply: ['$sellingPrice', '$totalSold'] } },
+          totalCost: { $sum: { $multiply: ['$purchasePrice', '$totalSold'] } },
+          totalProfit: { 
+            $sum: { 
+              $multiply: [
+                { $subtract: ['$sellingPrice', '$purchasePrice'] }, 
+                '$totalSold'
+              ] 
+            } 
+          },
+          outOfStock: { $sum: { $cond: [{ $eq: ['$stock', 0] }, 1, 0] } },
+          lowStock: {
+            $sum: {
+              $cond: [
+                { $and: [{ $gt: ['$stock', 0] }, { $lte: ['$stock', '$lowStockAlert'] }] },
+                1, 0
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    const productAnalytics = productAnalyticsAgg[0] || {
+      totalProducts: 0,
+      totalValue: 0,
+      totalRevenue: 0,
+      totalCost: 0,
+      totalProfit: 0,
+      outOfStock: 0,
+      lowStock: 0
+    };
+
+    // ============================================
+    // 3. TOP PRODUCTS
+    // ============================================
+    const topProducts = await Product.find(productQuery)
+      .select('name brand sellingPrice purchasePrice stock totalSold category createdBy')
+      .populate('createdBy', 'name email')
+      .sort({ totalSold: -1 })
+      .limit(parseInt(limit))
+      .lean();
+
+    // ============================================
+    // 4. INVENTORY ANALYTICS
+    // ============================================
+    const inventoryAnalyticsAgg = await Product.aggregate([
+      { $match: productQuery },
+      {
+        $group: {
+          _id: null,
+          totalProducts: { $sum: 1 },
+          totalStockValue: { $sum: { $multiply: ['$stock', '$purchasePrice'] } },
+          originalStockValue: { $sum: { $multiply: ['$originalQuantity', '$purchasePrice'] } },
+          restockedValue: { $sum: { $multiply: ['$restockedQuantity', '$purchasePrice'] } },
+          averageStock: { $avg: '$stock' },
+          totalItems: { $sum: '$stock' }
+        }
+      }
+    ]);
+
+    const inventoryAnalytics = inventoryAnalyticsAgg[0] || {
+      totalProducts: 0,
+      totalStockValue: 0,
+      originalStockValue: 0,
+      restockedValue: 0,
+      averageStock: 0,
+      totalItems: 0
+    };
+
+    // ============================================
+    // 5. PERFORMANCE METRICS
+    // ============================================
+    const salesPerformance = await Sale.aggregate([
+      { $match: salesQuery },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: '$totalAmount' },
+          totalProfit: { $sum: '$totalProfit' },
+          totalSales: { $sum: 1 },
+          averageSaleValue: { $avg: '$totalAmount' },
+          averageProfitPerSale: { $avg: '$totalProfit' }
+        }
+      }
+    ]);
+
+    const productPerformance = await Product.aggregate([
+      { $match: productQuery },
+      {
+        $group: {
+          _id: null,
+          averageProfitMargin: {
+            $avg: {
+              $cond: [
+                { $gt: ['$sellingPrice', 0] },
+                { $multiply: [{ $divide: [{ $subtract: ['$sellingPrice', '$purchasePrice'] }, '$sellingPrice'] }, 100] },
+                0
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    const performanceMetrics = {
+      sales: salesPerformance[0] || {
+        totalRevenue: 0,
+        totalProfit: 0,
+        totalSales: 0,
+        averageSaleValue: 0,
+        averageProfitPerSale: 0
+      },
+      products: productPerformance[0] || {
+        averageProfitMargin: 0
+      }
+    };
+
+    // ============================================
+    // 6. DAILY PERFORMANCE (Today's performance)
+    // ============================================
+    const targetDate = new Date();
+    targetDate.setHours(0, 0, 0, 0);
+    const nextDay = new Date(targetDate);
+    nextDay.setDate(nextDay.getDate() + 1);
+
+    let dailySalesQuery = {
+      createdAt: { $gte: targetDate, $lt: nextDay },
+      status: 'completed'
+    };
+    
+    // Apply same user filter for daily sales
+    if (salesQuery.soldBy) {
+      dailySalesQuery.soldBy = salesQuery.soldBy;
+    }
+
+    const dailyPerformanceAgg = await Sale.aggregate([
+      { $match: dailySalesQuery },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: '$totalAmount' },
+          totalProfit: { $sum: '$totalProfit' },
+          totalSales: { $sum: 1 },
+          totalItemsSold: { $sum: { $sum: '$items.quantity' } },
+          averageSaleValue: { $avg: '$totalAmount' }
+        }
+      }
+    ]);
+
+    const dailyPerformance = {
+      performance: dailyPerformanceAgg[0] || {
+        totalRevenue: 0,
+        totalProfit: 0,
+        totalSales: 0,
+        totalItemsSold: 0,
+        averageSaleValue: 0
+      },
+      summary: {
+        day: targetDate.toLocaleDateString('en-US', { weekday: 'long' }),
+        isToday: isToday(targetDate),
+        performanceRating: rateDailyPerformance(dailyPerformanceAgg[0] || { totalRevenue: 0 })
+      }
+    };
+
+    // ============================================
+    // 7. PRODUCT TRACKING
+    // ============================================
+    const trackingProducts = await Product.find(productQuery)
+      .select('name brand sellingPrice purchasePrice stock totalSold originalQuantity restockedQuantity lowStockAlert category createdBy')
+      .populate('createdBy', 'name email')
+      .sort({ totalSold: -1 })
+      .limit(parseInt(limit))
+      .lean();
+
+    const productTracking = trackingProducts.map(product => {
+      const totalRevenue = product.sellingPrice * product.totalSold;
+      const totalCost = product.purchasePrice * product.totalSold;
+      const totalProfit = totalRevenue - totalCost;
+      const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+      const sellThroughRate = product.originalQuantity > 0 ? 
+        (product.totalSold / product.originalQuantity) * 100 : 0;
+
+      return {
+        _id: product._id,
+        name: product.name,
+        brand: product.brand,
+        category: product.category,
+        creator: product.createdBy,
+        createdBy: product.createdBy,
+        pricing: {
+          cost: product.purchasePrice,
+          price: product.sellingPrice,
+          profitPerUnit: product.sellingPrice - product.purchasePrice
+        },
+        inventory: {
+          currentStock: product.stock,
+          originalQuantity: product.originalQuantity || product.stock,
+          restockedQuantity: product.restockedQuantity || 0,
+          lowStockAlert: product.lowStockAlert,
+          status: product.stock === 0 ? 'out-of-stock' : 
+                  product.stock <= product.lowStockAlert ? 'low-stock' : 'healthy'
+        },
+        sales: {
+          totalSold: product.totalSold,
+          totalRevenue,
+          totalCost,
+          totalProfit,
+          profitMargin,
+          sellThroughRate
+        },
+        performance: {
+          rating: calculateProductPerformance(totalProfit, profitMargin, sellThroughRate)
+        }
+      };
+    });
+
+    // ============================================
+    // 8. RESPONSE
+    // ============================================
+    const consolidatedData = {
+      salesOverview,
+      productAnalytics,
+      topProducts,
+      inventoryAnalytics,
+      performanceMetrics,
+      dailyPerformance,
+      productTracking
+    };
+
+    console.log(`✅ Consolidated analytics: ${productAnalytics.totalProducts} products, ${salesOverview.totalSales} sales`);
+
+    res.json({
+      success: true,
+      period,
+      ...consolidatedData,
+      filterInfo: {
+        isPersonalView: !!salesQuery.soldBy,
+        userRole: req.user?.role,
+        userId: salesQuery.soldBy || null,
+        viewType: salesQuery.soldBy ? 'personal' : 'system'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Consolidated analytics error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching consolidated analytics',
+      error: error.message
+    });
+  }
+};
+
+// Get sales overview analytics (standalone)
 exports.getSalesOverview = async (req, res) => {
   try {
     const { period = 'week' } = req.query;
@@ -128,7 +458,7 @@ exports.getSalesOverview = async (req, res) => {
   }
 };
 
-// Get product analytics
+// Get product analytics (standalone)
 exports.getProductAnalytics = async (req, res) => {
   try {
     console.log(`📈 Product Analytics - Path: ${req.path}, User: ${req.user?.name}`);
@@ -217,7 +547,7 @@ exports.getProductAnalytics = async (req, res) => {
   }
 };
 
-// Get inventory analytics
+// Get inventory analytics (standalone)
 exports.getInventoryAnalytics = async (req, res) => {
   try {
     console.log(`📦 Inventory Analytics - Path: ${req.path}, User: ${req.user?.name}`);
@@ -276,7 +606,7 @@ exports.getInventoryAnalytics = async (req, res) => {
   }
 };
 
-// Get performance metrics
+// Get performance metrics (standalone)
 exports.getPerformanceMetrics = async (req, res) => {
   try {
     const { period = 'week' } = req.query;
@@ -371,7 +701,7 @@ exports.getPerformanceMetrics = async (req, res) => {
   }
 };
 
-// Get daily performance
+// Get daily performance (standalone)
 exports.getDailyPerformance = async (req, res) => {
   try {
     const { date } = req.query;
@@ -440,7 +770,7 @@ exports.getDailyPerformance = async (req, res) => {
   }
 };
 
-// Get product tracking
+// Get product tracking (standalone)
 exports.getProductTracking = async (req, res) => {
   try {
     const { limit = 10 } = req.query;
@@ -475,6 +805,7 @@ exports.getProductTracking = async (req, res) => {
         brand: product.brand,
         category: product.category,
         creator: product.createdBy,
+        createdBy: product.createdBy,
         pricing: {
           cost: product.purchasePrice,
           price: product.sellingPrice,

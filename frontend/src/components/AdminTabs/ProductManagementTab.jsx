@@ -3,14 +3,15 @@ import {
   Plus, Edit, Trash2, Package, ChevronLeft, ChevronRight, Upload, X, RefreshCw, AlertCircle,
   Search, Filter, AlertTriangle, History, PackagePlus, DollarSign, Tag, Cloud, CloudOff,
   TrendingDown, Database, Eye, Save, Image as ImageIcon, Info, Star, TrendingUp,
-  ArrowUpDown, BarChart3, Layers, Shield, CheckCircle, Clock
+  ArrowUpDown, BarChart3, Layers, Shield, CheckCircle, Clock, EyeOff, Globe, User
 } from 'lucide-react';
 import { productsAPI } from '../../services/api';
 import LocalStorageService from '../../services/localStorageService';
 
 const ProductManagementTab = ({ 
   user, onLogout, initialProducts = [], onProductsUpdate, productsLoading = false,
-  isOnline = true, onSync
+  isOnline = true, onSync, recentlyUpdatedProducts = new Set(),
+  viewMode = 'personal', isAdmin = false
 }) => {
   const [products, setProducts] = useState(initialProducts);
   const [filteredProducts, setFilteredProducts] = useState(initialProducts);
@@ -41,7 +42,7 @@ const ProductManagementTab = ({
   const [minStock, setMinStock] = useState('');
   const [sortBy, setSortBy] = useState('name');
   const [sortOrder, setSortOrder] = useState('asc');
-  const [recentlyUpdated, setRecentlyUpdated] = useState(new Set());
+  const [recentlyUpdated, setRecentlyUpdated] = useState(recentlyUpdatedProducts || new Set());
   const [stats, setStats] = useState({
     totalProducts: 0,
     totalStock: 0,
@@ -76,14 +77,53 @@ const ProductManagementTab = ({
   const hasInitializedRef = useRef(false);
   const statsRef = useRef({ lastUpdate: null });
 
-  // Initialize products
+  // Helper function to filter products based on view mode
+  const filterProductsByViewMode = useCallback((productsList) => {
+    if (!productsList || !Array.isArray(productsList)) return productsList;
+    
+    // Only apply view mode filtering for admin users
+    if (!isAdmin || viewMode !== 'personal' || !user || !user._id) {
+      return productsList;
+    }
+    
+    // In personal view, show only products created by the current admin
+    const filtered = productsList.filter(product => {
+      // For online products, check createdBy field
+      if (product.createdBy) {
+        // Handle both string and object formats
+        const createdById = typeof product.createdBy === 'object' 
+          ? product.createdBy._id || product.createdBy 
+          : product.createdBy;
+        
+        return createdById === user._id;
+      }
+      
+      // For local products, check if they have isLocal flag or createdBy
+      if (product.isLocal) {
+        return product.createdBy === user._id || product.createdBy?._id === user._id;
+      }
+      
+      // If no creator info, include it (shouldn't happen for admin's personal view)
+      return false;
+    });
+    
+    console.log(`🔍 Filtered products: ${productsList.length} → ${filtered.length} (personal view)`);
+    return filtered;
+  }, [isAdmin, viewMode, user]);
+
+  // Initialize products with view mode filtering
   useEffect(() => {
-    console.log('🔄 ProductManagementTab initializing with', initialProducts.length, 'products');
-    setProducts(initialProducts);
-    setFilteredProducts(initialProducts);
+    console.log('🔄 ProductManagementTab initializing...');
+    console.log('👁️ View Mode:', viewMode, 'isAdmin:', isAdmin, 'User ID:', user?._id);
+    
+    // Apply view mode filtering to initial products
+    const filteredInitialProducts = filterProductsByViewMode(initialProducts);
+    
+    setProducts(filteredInitialProducts);
+    setFilteredProducts(filteredInitialProducts);
     
     const initialIndexes = {};
-    initialProducts.forEach(product => {
+    filteredInitialProducts.forEach(product => {
       initialIndexes[product._id] = 0;
     });
     setActiveImageIndexes(initialIndexes);
@@ -92,9 +132,14 @@ const ProductManagementTab = ({
       setLoading(false);
     }
     
-    // Calculate initial stats
-    calculateStats(initialProducts);
-  }, [initialProducts, productsLoading]);
+    // Calculate stats on filtered products
+    calculateStats(filteredInitialProducts);
+    
+    // Update recently updated products from parent
+    if (recentlyUpdatedProducts) {
+      setRecentlyUpdated(recentlyUpdatedProducts);
+    }
+  }, [initialProducts, productsLoading, viewMode, isAdmin, user, filterProductsByViewMode]);
 
   // Calculate statistics
   const calculateStats = useCallback((productList) => {
@@ -123,8 +168,8 @@ const ProductManagementTab = ({
       
       if (event.detail && event.detail.stockUpdates) {
         // Immediately update local state
-        setProducts(prevProducts => 
-          prevProducts.map(product => {
+        setProducts(prevProducts => {
+          const updatedProducts = prevProducts.map(product => {
             const update = event.detail.stockUpdates.find(u => u.productId === product._id);
             if (update) {
               const oldStock = product.stock;
@@ -152,8 +197,11 @@ const ProductManagementTab = ({
               };
             }
             return product;
-          })
-        );
+          });
+          
+          // Re-apply view mode filtering
+          return filterProductsByViewMode(updatedProducts);
+        });
         
         // Force refresh from parent after a short delay
         setTimeout(() => {
@@ -182,8 +230,8 @@ const ProductManagementTab = ({
       if (event.detail && event.detail.updates) {
         const updatedIds = new Set();
         
-        setProducts(prevProducts => 
-          prevProducts.map(product => {
+        setProducts(prevProducts => {
+          const updatedProducts = prevProducts.map(product => {
             const update = event.detail.updates.find(u => u.productId === product._id);
             if (update) {
               const newStock = Math.max(0, product.stock - update.quantity);
@@ -195,8 +243,11 @@ const ProductManagementTab = ({
               };
             }
             return product;
-          })
-        );
+          });
+          
+          // Re-apply view mode filtering
+          return filterProductsByViewMode(updatedProducts);
+        });
         
         // Highlight recently updated products
         setRecentlyUpdated(updatedIds);
@@ -222,40 +273,94 @@ const ProductManagementTab = ({
       }
     };
 
+    // Listen for view mode changes
+    const handleViewModeChanged = (event) => {
+      if (event.detail && event.detail.viewMode) {
+        console.log('🔄 ProductManagementTab: View mode changed to', event.detail.viewMode);
+        hasInitializedRef.current = false;
+        setProducts([]);
+        setFilteredProducts([]);
+        setLoading(true);
+        
+        setTimeout(() => {
+          if (onProductsUpdate) {
+            onProductsUpdate();
+          }
+        }, 100);
+      }
+    };
+
     window.addEventListener('saleCompleted', handleSaleCompleted);
     window.addEventListener('productsUpdated', handleProductsUpdated);
     window.addEventListener('stockUpdated', handleStockUpdated);
     window.addEventListener('clearProductCache', handleClearCache);
+    window.addEventListener('viewModeChanged', handleViewModeChanged);
     
     return () => {
       window.removeEventListener('saleCompleted', handleSaleCompleted);
       window.removeEventListener('productsUpdated', handleProductsUpdated);
       window.removeEventListener('stockUpdated', handleStockUpdated);
       window.removeEventListener('clearProductCache', handleClearCache);
+      window.removeEventListener('viewModeChanged', handleViewModeChanged);
     };
-  }, [onProductsUpdate]);
+  }, [onProductsUpdate, filterProductsByViewMode]);
 
-  // Optimized fetch function
+  // Optimized fetch function with consistent view mode filtering
   const fetchProducts = useCallback(async (force = false) => {
     if (!force && (initialProducts.length > 0 || loading)) return;
 
     console.log('🔄 ProductManagementTab fetching products...');
+    console.log('👁️ View Mode:', viewMode, 'isAdmin:', isAdmin, 'User ID:', user?._id);
     setLoading(true);
     setError('');
     
     try {
       if (isOnline) {
         console.log('🌐 Fetching products from API...');
-        const response = await productsAPI.getProducts({ page: 1, limit: 100 });
+        let response;
+        
+        if (isAdmin && viewMode === 'personal') {
+          // Admin's personal products
+          console.log('📦 Using admin personal products endpoint');
+          response = await productsAPI.getAdminProducts({ 
+            page: 1, 
+            limit: 100,
+            view: 'my' // Explicitly request personal view
+          });
+        } else {
+          // All products or system view
+          console.log('📦 Using all products endpoint');
+          response = await productsAPI.getProducts({ 
+            page: 1, 
+            limit: 100 
+          });
+        }
         
         if (response.data && response.data.products) {
-          const productsData = response.data.products;
-          console.log(`✅ Loaded ${productsData.length} products from backend`);
+          let productsData = response.data.products;
+          
+          // Apply view mode filtering for personal view
+          if (isAdmin && viewMode === 'personal') {
+            productsData = filterProductsByViewMode(productsData);
+          }
+          
+          console.log(`✅ Loaded ${productsData.length} products from backend (after view mode filtering)`);
           
           // Merge with local products
           const localProducts = LocalStorageService.getProducts();
+          
+          // Also filter local products by view mode
+          let filteredLocalProducts = localProducts;
+          if (isAdmin && viewMode === 'personal') {
+            filteredLocalProducts = localProducts.filter(p => 
+              p.createdBy === user._id || 
+              p.createdBy?._id === user._id || 
+              p.isLocal
+            );
+          }
+          
           const mergedProducts = productsData.map(backendProduct => {
-            const localProduct = localProducts.find(p => 
+            const localProduct = filteredLocalProducts.find(p => 
               !p.isLocal && p._id === backendProduct._id
             );
             
@@ -276,13 +381,16 @@ const ProductManagementTab = ({
             return backendProduct;
           });
           
-          // Add local-only products
-          const localOnlyProducts = localProducts.filter(p => p.isLocal);
+          // Add filtered local-only products
+          const localOnlyProducts = filteredLocalProducts.filter(p => p.isLocal);
           const allProducts = [...mergedProducts, ...localOnlyProducts];
           
           setProducts(allProducts);
           setFilteredProducts(allProducts);
+          
+          // Save filtered products to local storage
           LocalStorageService.saveProducts(allProducts);
+          
           calculateStats(allProducts);
           
           const initialIndexes = {};
@@ -295,31 +403,53 @@ const ProductManagementTab = ({
           window.dispatchEvent(new CustomEvent('productsLoaded'));
         }
       } else {
-        // Offline mode: load from local storage
+        // Offline mode: load from local storage with view mode filtering
         console.log('📱 Offline mode: loading products from local storage');
         const localProducts = LocalStorageService.getProducts();
-        setProducts(localProducts);
-        setFilteredProducts(localProducts);
-        calculateStats(localProducts);
+        
+        // Filter by creator in offline mode
+        let filteredLocalProducts = localProducts;
+        if (isAdmin && viewMode === 'personal' && user && user._id) {
+          filteredLocalProducts = localProducts.filter(p => 
+            p.createdBy === user._id || 
+            p.createdBy?._id === user._id || 
+            p.isLocal
+          );
+          console.log(`📱 Filtered to ${filteredLocalProducts.length} personal products`);
+        }
+        
+        setProducts(filteredLocalProducts);
+        setFilteredProducts(filteredLocalProducts);
+        calculateStats(filteredLocalProducts);
         
         const initialIndexes = {};
-        localProducts.forEach(product => {
+        filteredLocalProducts.forEach(product => {
           initialIndexes[product._id] = 0;
         });
         setActiveImageIndexes(initialIndexes);
         
-        console.log(`✅ Loaded ${localProducts.length} products from local storage`);
+        console.log(`✅ Loaded ${filteredLocalProducts.length} products from local storage (after view mode filtering)`);
       }
     } catch (error) {
       console.error('❌ Error fetching products:', error);
       const errorMessage = handleApiError(error);
       setError(errorMessage);
       
-      // Fallback to local storage
+      // Fallback to local storage with view mode filtering
       const localProducts = LocalStorageService.getProducts();
-      setProducts(localProducts);
-      setFilteredProducts(localProducts);
-      calculateStats(localProducts);
+      
+      let filteredLocalProducts = localProducts;
+      if (isAdmin && viewMode === 'personal' && user && user._id) {
+        filteredLocalProducts = localProducts.filter(p => 
+          p.createdBy === user._id || 
+          p.createdBy?._id === user._id || 
+          p.isLocal
+        );
+      }
+      
+      setProducts(filteredLocalProducts);
+      setFilteredProducts(filteredLocalProducts);
+      calculateStats(filteredLocalProducts);
       
       if (error.response?.status === 401) {
         setError('Your session has expired. Using local data.');
@@ -327,7 +457,7 @@ const ProductManagementTab = ({
     } finally {
       setLoading(false);
     }
-  }, [initialProducts.length, loading, isOnline, calculateStats]);
+  }, [initialProducts.length, loading, isOnline, calculateStats, viewMode, isAdmin, user, filterProductsByViewMode]);
 
   // Filter and sort products
   useEffect(() => {
@@ -442,6 +572,7 @@ const ProductManagementTab = ({
   // Enhanced refresh function that forces update
   const handleRefreshProducts = useCallback(async () => {
     console.log('🔄 Manually refreshing products...');
+    console.log('👁️ Current View Mode:', viewMode);
     setLoading(true);
     setError('');
     
@@ -454,7 +585,7 @@ const ProductManagementTab = ({
         // Use parent's update function
         await onProductsUpdate();
       } else {
-        // Fetch fresh data
+        // Fetch fresh data with current view mode
         await fetchProducts(true);
       }
       
@@ -468,7 +599,7 @@ const ProductManagementTab = ({
     } finally {
       setLoading(false);
     }
-  }, [onProductsUpdate, fetchProducts]);
+  }, [onProductsUpdate, fetchProducts, viewMode]);
 
   const handleApiError = (error) => {
     console.error('API Error:', error);
@@ -539,8 +670,8 @@ const ProductManagementTab = ({
         }
 
         // Update local state immediately
-        setProducts(prevProducts => 
-          prevProducts.map(p => 
+        setProducts(prevProducts => {
+          const updatedProducts = prevProducts.map(p => 
             p._id === restockingProduct._id 
               ? { 
                   ...p, 
@@ -550,8 +681,11 @@ const ProductManagementTab = ({
                   restockedQuantity: (p.restockedQuantity || 0) + parseInt(restockFormData.quantity)
                 }
               : p
-          )
-        );
+          );
+          
+          // Re-apply view mode filtering
+          return filterProductsByViewMode(updatedProducts);
+        });
 
         // Try to sync online if connected
         if (isOnline && !restockingProduct.isLocal) {
@@ -744,7 +878,14 @@ const ProductManagementTab = ({
   };
 
   const createProductOffline = async (productData) => {
-    const localProduct = LocalStorageService.addProduct(productData);
+    // Add current user as creator for local products
+    const productWithCreator = {
+      ...productData,
+      createdBy: user?._id || 'local-user',
+      isLocal: true
+    };
+    
+    const localProduct = LocalStorageService.addProduct(productWithCreator);
     return {
       success: true,
       message: 'Product saved locally. Will sync when back online.',
@@ -1011,48 +1152,98 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
   const lowStockProductsCount = products.filter(product => isLowStock(product) && !isOutOfStock(product)).length;
   const outOfStockProductsCount = products.filter(product => isOutOfStock(product)).length;
 
+  // Get view mode display text
+  const getViewModeText = () => {
+    if (!isAdmin) return '';
+    return viewMode === 'personal' ? ' (Your Products)' : ' (All Products)';
+  };
+
+  // Get creator info for a product
+  const getCreatorInfo = (product) => {
+    if (!product.createdBy) return 'Unknown';
+    
+    if (typeof product.createdBy === 'object') {
+      return product.createdBy.name || product.createdBy.email || 'Unknown';
+    }
+    
+    return 'User ID: ' + product.createdBy;
+  };
+
   return (
-    <div className="space-y-4">
-      {/* Network Status */}
-      {!isOnline && (
-        <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+    <div className="space-y-3 md:space-y-4">
+      {/* View Mode Indicator */}
+      {isAdmin && (
+        <div className="p-2 md:p-3 bg-blue-50 border border-blue-200 rounded-lg">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CloudOff className="h-4 w-4 text-yellow-600" />
+            <div className="flex items-center gap-1 md:gap-2">
+              {viewMode === 'personal' ? (
+                <EyeOff className="h-3.5 w-3.5 md:h-4 md:w-4 text-blue-600" />
+              ) : (
+                <Globe className="h-3.5 w-3.5 md:h-4 md:w-4 text-purple-600" />
+              )}
               <div>
-                <p className="text-sm font-semibold text-yellow-800">Offline Mode</p>
-                <p className="text-xs text-yellow-700">
-                  Changes will be saved locally and synced when internet returns
+                <p className="text-xs md:text-sm font-semibold text-blue-800">
+                  {viewMode === 'personal' ? 'Viewing Your Products' : 'Viewing All Products'}
+                </p>
+                <p className="text-[10px] md:text-xs text-blue-700">
+                  {viewMode === 'personal' 
+                    ? 'Only showing products created by you'
+                    : 'Showing all products in the system'
+                  }
+                </p>
+              </div>
+            </div>
+            <span className={`text-[10px] md:text-xs px-1.5 md:px-2 py-0.5 md:py-1 rounded-full font-medium ${
+              viewMode === 'personal' 
+                ? 'bg-blue-100 text-blue-800' 
+                : 'bg-purple-100 text-purple-800'
+            }`}>
+              {viewMode === 'personal' ? 'Personal View' : 'System View'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Network Status - Compact on Mobile */}
+      {!isOnline && (
+        <div className="p-2 md:p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1 md:gap-2">
+              <CloudOff className="h-3.5 w-3.5 md:h-4 md:w-4 text-yellow-600" />
+              <div>
+                <p className="text-xs md:text-sm font-semibold text-yellow-800">Offline Mode</p>
+                <p className="text-[10px] md:text-xs text-yellow-700">
+                  Changes saved locally
                 </p>
               </div>
             </div>
             {onSync && (
               <button
                 onClick={onSync}
-                className="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1.5 rounded text-sm transition-colors"
+                className="flex items-center gap-1 bg-yellow-600 hover:bg-yellow-700 text-white px-2 py-1.5 md:px-3 md:py-1.5 rounded text-xs transition-colors"
               >
                 <Cloud className="h-3 w-3" />
-                Sync when Online
+                <span className="hidden sm:inline">Sync</span>
               </button>
             )}
           </div>
         </div>
       )}
 
-      {/* Error Display */}
+      {/* Error Display - Compact on Mobile */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2 md:p-3">
           <div className="flex items-start justify-between">
             <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <AlertCircle className="h-4 w-4 text-red-600" />
-                <h3 className="text-red-800 font-semibold text-sm">Error</h3>
+              <div className="flex items-center gap-1 md:gap-2 mb-1">
+                <AlertCircle className="h-3.5 w-3.5 md:h-4 md:w-4 text-red-600" />
+                <h3 className="text-red-800 font-semibold text-xs md:text-sm">Error</h3>
               </div>
-              <p className="text-red-700 text-sm">{error}</p>
+              <p className="text-red-700 text-xs md:text-sm">{error}</p>
             </div>
             <button
               onClick={handleRetry}
-              className="ml-3 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-sm transition-colors flex items-center gap-2"
+              className="ml-2 bg-red-600 hover:bg-red-700 text-white px-2 py-1.5 md:px-3 md:py-1.5 rounded text-xs transition-colors flex items-center gap-1"
             >
               <RefreshCw className="h-3 w-3" />
               Retry
@@ -1061,9 +1252,9 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
         </div>
       )}
 
-      {/* Stock Update Debug Panel */}
+      {/* Stock Update Debug Panel - Hidden on Mobile */}
       {process.env.NODE_ENV === 'development' && productStockUpdates.length > 0 && (
-        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <div className="hidden md:block p-3 bg-blue-50 border border-blue-200 rounded-lg">
           <div className="flex items-center gap-2 mb-2">
             <Database className="h-4 w-4 text-blue-600" />
             <span className="font-medium text-blue-800 text-sm">Recent Stock Updates:</span>
@@ -1096,39 +1287,39 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
         </div>
       )}
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <div className="theme-surface rounded-lg shadow-sm border theme-border p-3">
-          <div className="flex items-center gap-2">
-            <Package className="h-4 w-4 text-blue-600" />
+      {/* Statistics Cards - Compact on Mobile */}
+      <div className="grid grid-cols-3 md:grid-cols-5 gap-2 md:gap-3">
+        <div className="theme-surface rounded-lg shadow-sm border theme-border p-2 md:p-3">
+          <div className="flex items-center gap-1 md:gap-2">
+            <Package className="h-3.5 w-3.5 md:h-4 md:w-4 text-blue-600" />
             <div>
-              <p className="text-xs theme-text-muted">Total Products</p>
-              <p className="text-lg font-bold theme-text">{stats.totalProducts}</p>
+              <p className="text-[10px] md:text-xs theme-text-muted">Products{getViewModeText()}</p>
+              <p className="text-sm md:text-lg font-bold theme-text">{stats.totalProducts}</p>
             </div>
           </div>
         </div>
         
-        <div className="theme-surface rounded-lg shadow-sm border theme-border p-3">
-          <div className="flex items-center gap-2">
-            <Layers className="h-4 w-4 text-green-600" />
+        <div className="theme-surface rounded-lg shadow-sm border theme-border p-2 md:p-3">
+          <div className="flex items-center gap-1 md:gap-2">
+            <Layers className="h-3.5 w-3.5 md:h-4 md:w-4 text-green-600" />
             <div>
-              <p className="text-xs theme-text-muted">Total Stock</p>
-              <p className="text-lg font-bold theme-text">{stats.totalStock.toLocaleString()}</p>
+              <p className="text-[10px] md:text-xs theme-text-muted">Stock</p>
+              <p className="text-sm md:text-lg font-bold theme-text">{stats.totalStock.toLocaleString()}</p>
             </div>
           </div>
         </div>
         
-        <div className="theme-surface rounded-lg shadow-sm border theme-border p-3">
-          <div className="flex items-center gap-2">
-            <DollarSign className="h-4 w-4 text-purple-600" />
+        <div className="theme-surface rounded-lg shadow-sm border theme-border p-2 md:p-3">
+          <div className="flex items-center gap-1 md:gap-2">
+            <DollarSign className="h-3.5 w-3.5 md:h-4 md:w-4 text-purple-600" />
             <div>
-              <p className="text-xs theme-text-muted">Total Value</p>
-              <p className="text-lg font-bold theme-text">UGX {stats.totalValue.toLocaleString()}</p>
+              <p className="text-[10px] md:text-xs theme-text-muted">Value</p>
+              <p className="text-sm md:text-lg font-bold theme-text">UGX {stats.totalValue.toLocaleString()}</p>
             </div>
           </div>
         </div>
         
-        <div className="theme-surface rounded-lg shadow-sm border theme-border p-3">
+        <div className="hidden md:block theme-surface rounded-lg shadow-sm border theme-border p-3">
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-yellow-600" />
             <div>
@@ -1138,7 +1329,7 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
           </div>
         </div>
         
-        <div className="theme-surface rounded-lg shadow-sm border theme-border p-3">
+        <div className="hidden md:block theme-surface rounded-lg shadow-sm border theme-border p-3">
           <div className="flex items-center gap-2">
             <X className="h-4 w-4 text-red-600" />
             <div>
@@ -1149,40 +1340,42 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
         </div>
       </div>
 
-      {/* Header Section */}
-      <div className="theme-surface rounded-lg shadow-sm border theme-border p-4">
-        <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
-          <div className="flex-1">
-            <h2 className="text-lg font-semibold theme-text flex items-center gap-2">
-              <Package className="h-5 w-5" />
-              Products Management
+      {/* Header Section - Compact on Mobile */}
+      <div className="theme-surface rounded-lg shadow-sm border theme-border p-3 md:p-4">
+        <div className="flex flex-col gap-3 md:gap-4 items-start md:items-center justify-between">
+          <div className="flex-1 w-full">
+            <h2 className="text-base md:text-lg font-semibold theme-text flex items-center gap-2">
+              <Package className="h-4 w-4 md:h-5 md:w-5" />
+              Products{getViewModeText()}
             </h2>
-            <p className="text-sm theme-text-muted mt-1">
-              {loading ? 'Loading products...' : `Showing ${filteredProducts.length} of ${products.length} product${products.length !== 1 ? 's' : ''}`}
-              {!isOnline && ' (Offline Mode)'}
+            <p className="text-xs theme-text-muted mt-1">
+              {loading ? 'Loading...' : `${filteredProducts.length} of ${products.length} product${products.length !== 1 ? 's' : ''}`}
+              {!isOnline && ' (Offline)'}
+              {isAdmin && viewMode === 'personal' && ' • Personal View'}
+              {isAdmin && viewMode === 'system' && ' • System View'}
             </p>
           </div>
           
-          <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-            {/* Search */}
-            <div className="relative flex-1 lg:w-64">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 theme-text-muted" />
+          <div className="flex flex-col sm:flex-row gap-2 md:gap-3 w-full">
+            {/* Search - Compact on Mobile */}
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 md:h-4 md:w-4 theme-text-muted" />
               <input
                 type="text"
                 placeholder="Search products..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-3 py-2.5 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm placeholder-theme-text-muted"
+                className="w-full pl-9 md:pl-10 pr-3 py-2 md:py-2.5 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm placeholder-theme-text-muted"
               />
             </div>
 
-            {/* Category Filter */}
-            <div className="relative flex-1 lg:w-48">
-              <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 theme-text-muted" />
+            {/* Category Filter - Compact on Mobile */}
+            <div className="relative flex-1 md:w-48">
+              <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 md:h-4 md:w-4 theme-text-muted" />
               <select
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
-                className="w-full pl-10 pr-3 py-2.5 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm appearance-none"
+                className="w-full pl-9 md:pl-10 pr-3 py-2 md:py-2.5 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm appearance-none"
               >
                 <option value="all">All Categories</option>
                 {uniqueCategories.filter(cat => cat !== 'all').map(category => (
@@ -1193,15 +1386,16 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
               </select>
             </div>
 
-            {/* Action Buttons */}
+            {/* Action Buttons - Compact on Mobile */}
             <div className="flex gap-2">
               <button
                 onClick={handleRefreshProducts}
                 disabled={loading}
-                className="flex items-center gap-2 theme-border border theme-text-muted hover:theme-secondary px-3 py-2.5 rounded-lg text-sm transition-colors disabled:opacity-50"
+                className="flex items-center gap-1 md:gap-2 theme-border border theme-text-muted hover:theme-secondary px-2.5 md:px-3 py-2 md:py-2.5 rounded-lg text-xs md:text-sm transition-colors disabled:opacity-50"
+                title="Refresh"
               >
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                Refresh
+                <RefreshCw className={`h-3.5 w-3.5 md:h-4 md:w-4 ${loading ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
               </button>
               <button
                 onClick={() => {
@@ -1209,58 +1403,60 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                   setEditingProduct(null);
                   resetForm();
                 }}
-                className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-3 py-2.5 rounded-lg text-sm transition-colors shadow-sm hover:shadow"
+                className="flex items-center gap-1 md:gap-2 bg-green-600 hover:bg-green-700 text-white px-2.5 md:px-3 py-2 md:py-2.5 rounded-lg text-xs md:text-sm transition-colors shadow-sm hover:shadow"
               >
-                <Plus className="h-4 w-4" />
-                Add Product
+                <Plus className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                <span className="hidden sm:inline">Add</span>
               </button>
             </div>
           </div>
         </div>
 
-        {/* Advanced Filters */}
-        <div className="mt-4 pt-4 border-t theme-border">
-          <div className="flex items-center justify-between mb-3">
+        {/* Advanced Filters - Compact on Mobile */}
+        <div className="mt-3 md:mt-4 pt-3 md:pt-4 border-t theme-border">
+          <div className="flex items-center justify-between mb-2 md:mb-3">
             <button
               onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-              className="flex items-center gap-2 text-sm theme-text-muted hover:theme-text"
+              className="flex items-center gap-1 md:gap-2 text-xs theme-text-muted hover:theme-text px-2 py-1.5 rounded-md border theme-border hover:bg-gray-50 transition-colors"
             >
-              <Filter className="h-4 w-4" />
-              {showAdvancedFilters ? 'Hide Filters' : 'Show Filters'}
-              <span className="text-xs theme-text-muted">({lowStockProductsCount} low stock, {outOfStockProductsCount} out of stock)</span>
+              <Filter className="h-3.5 w-3.5 md:h-4 md:w-4" />
+              {showAdvancedFilters ? 'Hide' : 'Filters'}
+              <span className="text-[10px] md:text-xs theme-text-muted hidden sm:inline">
+                ({lowStockProductsCount} low, {outOfStockProductsCount} out)
+              </span>
             </button>
             
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2 cursor-pointer text-sm theme-text-muted">
+            <div className="flex items-center gap-2 md:gap-3">
+              <div className="flex items-center gap-1 md:gap-2">
+                <label className="flex items-center gap-1 md:gap-2 cursor-pointer text-xs theme-text-muted">
                   <input
                     type="checkbox"
                     checked={lowStockFilter}
                     onChange={(e) => setLowStockFilter(e.target.checked)}
                     className="rounded theme-border text-blue-600 focus:ring-blue-500 bg-gray-100"
                   />
-                  Low Stock Only
+                  <span className="hidden sm:inline">Low Stock</span>
                 </label>
               </div>
               
               <button
                 onClick={clearFilters}
-                className="text-sm text-red-600 hover:text-red-800"
+                className="text-xs text-red-600 hover:text-red-800 px-2 py-1.5 rounded-md border border-red-200 hover:bg-red-50 transition-colors"
               >
-                Clear Filters
+                Clear
               </button>
             </div>
           </div>
           
           {showAdvancedFilters && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-3 theme-secondary rounded-lg">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-3 theme-secondary rounded-lg">
               <div>
                 <label className="block text-xs font-medium theme-text mb-1">Min Price</label>
                 <input
                   type="number"
                   value={minPrice}
                   onChange={(e) => setMinPrice(e.target.value)}
-                  className="w-full px-3 py-2 theme-border border rounded text-sm theme-surface theme-text"
+                  className="w-full px-3 py-2 theme-border border rounded text-xs md:text-sm theme-surface theme-text"
                   placeholder="UGX"
                 />
               </div>
@@ -1271,7 +1467,7 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                   type="number"
                   value={maxPrice}
                   onChange={(e) => setMaxPrice(e.target.value)}
-                  className="w-full px-3 py-2 theme-border border rounded text-sm theme-surface theme-text"
+                  className="w-full px-3 py-2 theme-border border rounded text-xs md:text-sm theme-surface theme-text"
                   placeholder="UGX"
                 />
               </div>
@@ -1282,7 +1478,7 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                   type="number"
                   value={minStock}
                   onChange={(e) => setMinStock(e.target.value)}
-                  className="w-full px-3 py-2 theme-border border rounded text-sm theme-surface theme-text"
+                  className="w-full px-3 py-2 theme-border border rounded text-xs md:text-sm theme-surface theme-text"
                   placeholder="Units"
                 />
               </div>
@@ -1293,7 +1489,7 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                   <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value)}
-                    className="flex-1 px-3 py-2 theme-border border rounded text-sm theme-surface theme-text"
+                    className="flex-1 px-3 py-2 theme-border border rounded text-xs md:text-sm theme-surface theme-text"
                   >
                     <option value="name">Name</option>
                     <option value="price">Price</option>
@@ -1303,9 +1499,10 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                   </select>
                   <button
                     onClick={toggleSortOrder}
-                    className="px-3 py-2 theme-border border rounded text-sm theme-surface theme-text-muted hover:theme-secondary"
+                    className="px-2 md:px-3 py-2 theme-border border rounded text-xs md:text-sm theme-surface theme-text-muted hover:theme-secondary"
+                    title="Sort Order"
                   >
-                    <ArrowUpDown className="h-4 w-4" />
+                    <ArrowUpDown className="h-3.5 w-3.5 md:h-4 md:w-4" />
                   </button>
                 </div>
               </div>
@@ -1316,24 +1513,29 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
 
       {/* Products Grid */}
       <div className="theme-surface rounded-lg shadow-sm border theme-border">
-        <div className="p-4 border-b theme-border">
+        <div className="p-3 md:p-4 border-b theme-border">
           <h3 className="text-sm font-semibold theme-text flex items-center gap-2">
-            <Package className="h-4 w-4" />
-            Product Inventory
+            <Package className="h-3.5 w-3.5 md:h-4 md:w-4" />
+            Inventory
             {recentlyUpdated.size > 0 && (
               <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-800 animate-pulse">
                 {recentlyUpdated.size} updated
               </span>
             )}
+            {isAdmin && viewMode === 'personal' && (
+              <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-800">
+                Your Products
+              </span>
+            )}
           </h3>
         </div>
 
-        <div className="p-4">
+        <div className="p-3 md:p-4">
           {loading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
               {[...Array(6)].map((_, i) => (
-                <div key={i} className="theme-surface rounded-lg border theme-border p-4 animate-pulse">
-                  <div className="bg-gray-300 h-48 rounded-lg mb-3"></div>
+                <div key={i} className="theme-surface rounded-lg border theme-border p-3 md:p-4 animate-pulse">
+                  <div className="bg-gray-300 h-40 md:h-48 rounded-lg mb-2 md:mb-3"></div>
                   <div className="space-y-2">
                     <div className="bg-gray-300 h-4 rounded"></div>
                     <div className="bg-gray-300 h-3 rounded w-3/4"></div>
@@ -1343,15 +1545,17 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
               ))}
             </div>
           ) : filteredProducts.length === 0 ? (
-            <div className="text-center py-8">
-              <Package className="h-12 w-12 mx-auto mb-3 theme-text-muted opacity-60" />
-              <h3 className="text-lg font-semibold theme-text mb-1">
-                {products.length === 0 ? 'No Products Found' : 'No Products Match Your Search'}
+            <div className="text-center py-6 md:py-8">
+              <Package className="h-10 w-10 md:h-12 md:w-12 mx-auto mb-2 md:mb-3 theme-text-muted opacity-60" />
+              <h3 className="text-base md:text-lg font-semibold theme-text mb-1">
+                {products.length === 0 ? 'No Products Found' : 'No Products Match'}
               </h3>
-              <p className="theme-text-muted text-sm mb-4">
+              <p className="theme-text-muted text-xs md:text-sm mb-3 md:mb-4">
                 {products.length === 0 
-                  ? 'Get started by adding your first product' 
-                  : 'Try adjusting your search or filter criteria'
+                  ? isAdmin && viewMode === 'personal' 
+                    ? 'You haven\'t created any products yet' 
+                    : 'Add your first product' 
+                  : 'Adjust search or filters'
                 }
               </p>
               {products.length === 0 && (
@@ -1361,14 +1565,17 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                     setEditingProduct(null);
                     resetForm();
                   }}
-                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg text-sm transition-colors shadow-sm hover:shadow"
+                  className="bg-green-600 hover:bg-green-700 text-white px-3 md:px-4 py-2 md:py-2.5 rounded-lg text-xs md:text-sm transition-colors shadow-sm hover:shadow"
                 >
-                  Add First Product
+                  {isAdmin && viewMode === 'personal' 
+                    ? 'Create Your First Product' 
+                    : 'Add First Product'
+                  }
                 </button>
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
               {filteredProducts.map((product) => {
                 const profitMargin = calculateProfitMargin(product.purchasePrice, product.sellingPrice);
                 const profitAmount = calculateProfitAmount(product.purchasePrice, product.sellingPrice);
@@ -1387,46 +1594,54 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                     }`}
                   >
                     {/* Stock Status Badges */}
-                    <div className="absolute top-3 left-3 z-10 flex flex-col gap-1">
+                    <div className="absolute top-2 left-2 z-10 flex flex-col gap-1">
                       {lowStock && !outOfStock && (
-                        <span className="bg-yellow-500 text-white text-xs px-2 py-1 rounded-full font-medium flex items-center gap-1 shadow-sm">
-                          <AlertTriangle className="h-3 w-3" />
-                          Low Stock
+                        <span className="bg-yellow-500 text-white text-[10px] px-1.5 py-1 rounded-full font-medium flex items-center gap-0.5 shadow-sm">
+                          <AlertTriangle className="h-2.5 w-2.5" />
+                          <span className="hidden sm:inline">Low</span>
                         </span>
                       )}
                       
                       {outOfStock && (
-                        <span className="bg-red-500 text-white text-xs px-2 py-1 rounded-full font-medium flex items-center gap-1 shadow-sm">
-                          <X className="h-3 w-3" />
-                          Out of Stock
+                        <span className="bg-red-500 text-white text-[10px] px-1.5 py-1 rounded-full font-medium flex items-center gap-0.5 shadow-sm">
+                          <X className="h-2.5 w-2.5" />
+                          <span className="hidden sm:inline">Out</span>
                         </span>
                       )}
                     </div>
                     
-                    <div className="absolute top-3 right-3 z-10 flex flex-col gap-1">
+                    <div className="absolute top-2 right-2 z-10 flex flex-col gap-1">
                       {product.isLocal && (
-                        <span className="bg-blue-500 text-white text-xs px-2 py-1 rounded-full font-medium flex items-center gap-1 shadow-sm">
-                          <Shield className="h-3 w-3" />
-                          Local
+                        <span className="bg-blue-500 text-white text-[10px] px-1.5 py-1 rounded-full font-medium flex items-center gap-0.5 shadow-sm">
+                          <Shield className="h-2.5 w-2.5" />
+                          <span className="hidden sm:inline">Local</span>
                         </span>
                       )}
                       
                       {isRecentlyUpdated && (
-                        <span className="bg-green-500 text-white text-xs px-2 py-1 rounded-full font-medium flex items-center gap-1 shadow-sm animate-pulse">
-                          <ArrowUpDown className="h-3 w-3" />
-                          Updated
+                        <span className="bg-green-500 text-white text-[10px] px-1.5 py-1 rounded-full font-medium flex items-center gap-0.5 shadow-sm animate-pulse">
+                          <ArrowUpDown className="h-2.5 w-2.5" />
+                          <span className="hidden sm:inline">Updated</span>
+                        </span>
+                      )}
+                      
+                      {/* Show creator info for admin in system view */}
+                      {isAdmin && viewMode === 'system' && product.createdBy && (
+                        <span className="bg-gray-500 text-white text-[10px] px-1.5 py-1 rounded-full font-medium flex items-center gap-0.5 shadow-sm" title={`Created by: ${getCreatorInfo(product)}`}>
+                          <User className="h-2.5 w-2.5" />
+                          <span className="hidden sm:inline">Creator</span>
                         </span>
                       )}
                     </div>
 
-                    {/* Image Section */}
-                    <div className="relative h-56 bg-gray-100 flex-shrink-0">
+                    {/* Image Section - Compact on Mobile */}
+                    <div className="relative h-40 md:h-56 bg-gray-100 flex-shrink-0">
                       {product.images && product.images.length > 0 ? (
                         <>
                           <img
                             src={product.images[currentImageIndex]}
                             alt={product.name}
-                            className="w-full h-full object-contain p-3"
+                            className="w-full h-full object-contain p-2 md:p-3"
                             onError={(e) => {
                               e.target.src = 'https://via.placeholder.com/300x200?text=No+Image';
                             }}
@@ -1436,25 +1651,25 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                             <>
                               <button
                                 onClick={() => prevImage(product._id)}
-                                className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/70 hover:bg-black/90 text-white p-1.5 rounded-full transition-all shadow-lg"
+                                className="absolute left-1 md:left-2 top-1/2 transform -translate-y-1/2 bg-black/70 hover:bg-black/90 text-white p-1 md:p-1.5 rounded-full transition-all shadow-lg"
                               >
-                                <ChevronLeft className="h-4 w-4" />
+                                <ChevronLeft className="h-3 w-3 md:h-4 md:w-4" />
                               </button>
                               <button
                                 onClick={() => nextImage(product._id)}
-                                className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/70 hover:bg-black/90 text-white p-1.5 rounded-full transition-all shadow-lg"
+                                className="absolute right-1 md:right-2 top-1/2 transform -translate-y-1/2 bg-black/70 hover:bg-black/90 text-white p-1 md:p-1.5 rounded-full transition-all shadow-lg"
                               >
-                                <ChevronRight className="h-4 w-4" />
+                                <ChevronRight className="h-3 w-3 md:h-4 md:w-4" />
                               </button>
                             </>
                           )}
                           
                           {product.images.length > 1 && (
-                            <div className="absolute bottom-3 left-1/2 transform -translate-x-1/2 flex gap-1.5">
+                            <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 flex gap-1">
                               {product.images.map((_, index) => (
                                 <div
                                   key={index}
-                                  className={`w-2 h-2 rounded-full transition-all ${
+                                  className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full transition-all ${
                                     index === currentImageIndex
                                       ? 'bg-white shadow-lg'
                                       : 'bg-white/50'
@@ -1464,111 +1679,125 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                             </div>
                           )}
                           
-                          <div className="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded-full shadow-sm">
+                          <div className="absolute top-1 md:top-2 right-1 md:right-2 bg-black/70 text-white text-[10px] md:text-xs px-1.5 py-0.5 md:px-2 md:py-1 rounded-full shadow-sm">
                             {currentImageIndex + 1}/{product.images.length}
                           </div>
                         </>
                       ) : (
                         <div className="w-full h-full flex flex-col items-center justify-center theme-text-muted bg-gray-200">
-                          <ImageIcon className="h-12 w-12 opacity-50 mb-2" />
-                          <span className="text-sm">No Image</span>
+                          <ImageIcon className="h-8 w-8 md:h-12 md:w-12 opacity-50 mb-1 md:mb-2" />
+                          <span className="text-xs">No Image</span>
                         </div>
                       )}
                     </div>
 
-                    {/* Product Info */}
-                    <div className="p-4 flex-1 flex flex-col">
-                      <div className="flex justify-between items-start mb-2">
-                        <h3 className="font-semibold theme-text text-sm line-clamp-1 flex-1 mr-2">
+                    {/* Product Info - Compact on Mobile */}
+                    <div className="p-3 md:p-4 flex-1 flex flex-col">
+                      <div className="flex justify-between items-start mb-1 md:mb-2">
+                        <h3 className="font-semibold theme-text text-xs md:text-sm line-clamp-1 flex-1 mr-1 md:mr-2">
                           {product.name}
                         </h3>
-                        <span className="font-bold text-blue-600 whitespace-nowrap text-sm">
+                        <span className="font-bold text-blue-600 whitespace-nowrap text-xs md:text-sm">
                           UGX {product.sellingPrice?.toLocaleString()}
                         </span>
                       </div>
                       
-                      <div className="flex items-center gap-2 mb-2">
-                        <p className="theme-text-muted text-xs">{product.brand}</p>
+                      <div className="flex items-center gap-1 md:gap-2 mb-1 md:mb-2">
+                        <p className="theme-text-muted text-[10px] md:text-xs">{product.brand}</p>
                         {product.sku && (
-                          <span className="text-xs px-1.5 py-0.5 bg-gray-100 theme-text rounded">
+                          <span className="text-[10px] md:text-xs px-1 py-0.5 md:px-1.5 md:py-0.5 bg-gray-100 theme-text rounded">
                             {product.sku}
                           </span>
                         )}
                       </div>
                       
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="inline-block px-2.5 py-1 bg-blue-100 text-blue-800 rounded-full capitalize text-xs font-medium">
+                      <div className="flex items-center justify-between mb-2 md:mb-3">
+                        <span className="inline-block px-2 py-0.5 md:px-2.5 md:py-1 bg-blue-100 text-blue-800 rounded-full capitalize text-[10px] md:text-xs font-medium">
                           {product.category}
                         </span>
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full font-medium text-xs ${
+                        <span className={`inline-flex items-center px-2 py-0.5 md:px-2.5 md:py-1 rounded-full font-medium text-[10px] md:text-xs ${
                           outOfStock ? 'bg-red-100 text-red-800' :
                           lowStock ? 'bg-yellow-100 text-yellow-800' : 
                           'bg-green-100 text-green-800'
                         }`}>
-                          {product.stock} in stock
+                          {product.stock}
                           {lowStock && !outOfStock && (
-                            <AlertTriangle className="h-3 w-3 ml-1" />
+                            <AlertTriangle className="h-2.5 w-2.5 md:h-3 md:w-3 ml-0.5" />
                           )}
                         </span>
                       </div>
 
-                      {/* Profit Information */}
-                      <div className="grid grid-cols-2 gap-3 mb-3">
-                        <div className="text-center p-2.5 theme-secondary rounded-lg">
-                          <p className="theme-text-muted text-xs mb-1">Cost</p>
-                          <p className="font-semibold theme-text text-sm">
+                      {/* Profit Information - Compact on Mobile */}
+                      <div className="grid grid-cols-2 gap-2 md:gap-3 mb-2 md:mb-3">
+                        <div className="text-center p-1.5 md:p-2.5 theme-secondary rounded-lg">
+                          <p className="theme-text-muted text-[10px] md:text-xs mb-0.5 md:mb-1">Cost</p>
+                          <p className="font-semibold theme-text text-xs md:text-sm">
                             UGX {product.purchasePrice?.toLocaleString()}
                           </p>
                         </div>
-                        <div className="text-center p-2.5 bg-green-50 rounded-lg">
-                          <p className="theme-text-muted text-xs mb-1">Profit</p>
-                          <p className="font-semibold text-green-600 text-sm">
+                        <div className="text-center p-1.5 md:p-2.5 bg-green-50 rounded-lg">
+                          <p className="theme-text-muted text-[10px] md:text-xs mb-0.5 md:mb-1">Profit</p>
+                          <p className="font-semibold text-green-600 text-xs md:text-sm">
                             UGX {profitAmount.toLocaleString()}
                           </p>
-                          <p className="text-green-600 text-xs">({profitMargin}%)</p>
+                          <p className="text-green-600 text-[10px] md:text-xs">({profitMargin}%)</p>
                         </div>
                       </div>
 
-                      <p className="theme-text line-clamp-2 mb-3 text-xs leading-relaxed flex-1">
+                      <p className="theme-text line-clamp-2 mb-2 md:mb-3 text-[10px] md:text-xs leading-relaxed flex-1">
                         {product.description}
                       </p>
 
-                      {/* Action Buttons */}
-                      <div className="grid grid-cols-2 gap-2 mt-auto">
+                      {/* Show creator info for admin in system view */}
+                      {isAdmin && viewMode === 'system' && product.createdBy && (
+                        <div className="mb-2 md:mb-3 p-1.5 md:p-2 bg-gray-50 rounded-lg">
+                          <p className="text-[10px] md:text-xs text-gray-600 flex items-center gap-1">
+                            <User className="h-2.5 w-2.5 md:h-3 md:w-3" />
+                            Created by: {getCreatorInfo(product)}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Action Buttons - Compact on Mobile */}
+                      <div className="grid grid-cols-2 gap-1.5 md:gap-2 mt-auto">
                         <button
                           onClick={() => handleRestock(product)}
-                          className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-1.5 text-xs shadow-sm hover:shadow"
+                          className="bg-blue-600 hover:bg-blue-700 text-white py-1.5 md:py-2 px-1 md:px-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-1 text-[10px] md:text-xs shadow-sm hover:shadow"
+                          title="Restock"
                         >
-                          <PackagePlus className="h-3.5 w-3.5" />
-                          Restock
+                          <PackagePlus className="h-3 w-3 md:h-3.5 md:w-3.5" />
+                          <span className="hidden sm:inline">Restock</span>
                         </button>
                         <button
                           onClick={() => handleEdit(product)}
-                          className="bg-green-600 hover:bg-green-700 text-white py-2 px-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-1.5 text-xs shadow-sm hover:shadow"
+                          className="bg-green-600 hover:bg-green-700 text-white py-1.5 md:py-2 px-1 md:px-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-1 text-[10px] md:text-xs shadow-sm hover:shadow"
+                          title="Edit"
                         >
-                          <Edit className="h-3.5 w-3.5" />
-                          Edit
+                          <Edit className="h-3 w-3 md:h-3.5 md:w-3.5" />
+                          <span className="hidden sm:inline">Edit</span>
                         </button>
                         <button
                           onClick={() => handleViewStockHistory(product)}
-                          className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-1.5 text-xs shadow-sm hover:shadow"
+                          className="bg-purple-600 hover:bg-purple-700 text-white py-1.5 md:py-2 px-1 md:px-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-1 text-[10px] md:text-xs shadow-sm hover:shadow"
+                          title="History"
                         >
-                          <History className="h-3.5 w-3.5" />
-                          History
+                          <History className="h-3 w-3 md:h-3.5 md:w-3.5" />
+                          <span className="hidden sm:inline">History</span>
                         </button>
                         <button
                           onClick={() => handleQuickView(product)}
-                          className="bg-gray-600 hover:bg-gray-700 text-white py-2 px-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-1.5 text-xs shadow-sm hover:shadow"
+                          className="bg-gray-600 hover:bg-gray-700 text-white py-1.5 md:py-2 px-1 md:px-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-1 text-[10px] md:text-xs shadow-sm hover:shadow"
+                          title="Quick View"
                         >
-                          <Eye className="h-3.5 w-3.5" />
-                          Quick View
+                          <Eye className="h-3 w-3 md:h-3.5 md:w-3.5" />
+                          <span className="hidden sm:inline">View</span>
                         </button>
                         <button
                           onClick={() => handleDelete(product._id)}
-                          className="bg-red-600 hover:bg-red-700 text-white py-2 px-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-1.5 text-xs shadow-sm hover:shadow col-span-2"
+                          className="bg-red-600 hover:bg-red-700 text-white py-1.5 md:py-2 px-1 md:px-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-1 text-[10px] md:text-xs shadow-sm hover:shadow col-span-2"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Delete Product
+                          <Trash2 className="h-3 w-3 md:h-3.5 md:w-3.5" />
+                          Delete
                         </button>
                       </div>
                     </div>
@@ -1580,14 +1809,14 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
         </div>
       </div>
 
-      {/* Restock Form Modal */}
+      {/* Restock Form Modal - Responsive */}
       {showRestockForm && restockingProduct && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-          <div className="theme-surface rounded-xl shadow-2xl max-w-lg w-full max-h-[95vh] overflow-y-auto">
-            <div className="p-4 border-b theme-border flex justify-between items-center">
-              <h2 className="text-lg font-semibold theme-text flex items-center gap-2">
-                <PackagePlus className="h-5 w-5" />
-                Restock & Update Prices
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-2 md:p-4 z-50">
+          <div className="theme-surface rounded-xl shadow-2xl max-w-full md:max-w-lg w-full max-h-[95vh] overflow-y-auto">
+            <div className="p-3 md:p-4 border-b theme-border flex justify-between items-center">
+              <h2 className="text-base md:text-lg font-semibold theme-text flex items-center gap-2">
+                <PackagePlus className="h-4 w-4 md:h-5 md:w-5" />
+                Restock & Update
               </h2>
               <button
                 onClick={() => {
@@ -1597,23 +1826,23 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                 }}
                 className="theme-text-muted hover:theme-text transition-colors"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4 w-4 md:h-5 md:w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleRestockSubmit} className="p-5 space-y-4">
-              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <form onSubmit={handleRestockSubmit} className="p-3 md:p-5 space-y-3 md:space-y-4">
+              <div className="p-2 md:p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="font-semibold theme-text text-sm">{restockingProduct.name}</p>
                 <p className="theme-text-muted text-xs mt-1">Current Stock: {restockingProduct.stock}</p>
                 {restockingProduct.isLocal && (
                   <p className="text-xs text-blue-600 mt-1">
-                    ⚠️ Local product - will sync when online
+                    ⚠️ Local product
                   </p>
                 )}
               </div>
 
               <div>
-                <label className="block font-medium theme-text text-sm mb-2">
+                <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                   Quantity to Add *
                 </label>
                 <input
@@ -1622,18 +1851,18 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                   min="1"
                   value={restockFormData.quantity}
                   onChange={(e) => setRestockFormData(prev => ({ ...prev, quantity: e.target.value }))}
-                  className="w-full px-4 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
+                  className="w-full px-3 md:px-4 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
                   placeholder="Enter quantity"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
                 <div>
-                  <label className="block font-medium theme-text text-sm mb-2">
+                  <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                     Purchase Price *
                   </label>
                   <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 theme-text-muted" />
+                    <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 md:h-4 md:w-4 theme-text-muted" />
                     <input
                       type="number"
                       required
@@ -1641,21 +1870,21 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                       min="0"
                       value={restockFormData.purchasePrice}
                       onChange={(e) => setRestockFormData(prev => ({ ...prev, purchasePrice: e.target.value }))}
-                      className="w-full pl-10 pr-3 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
+                      className="w-full pl-9 md:pl-10 pr-3 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
                       placeholder="Cost price"
                     />
                   </div>
-                  <p className="text-xs theme-text-muted mt-2">
+                  <p className="text-xs theme-text-muted mt-1 md:mt-2">
                     Current: UGX {restockingProduct.purchasePrice?.toLocaleString()}
                   </p>
                 </div>
 
                 <div>
-                  <label className="block font-medium theme-text text-sm mb-2">
+                  <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                     Selling Price *
                   </label>
                   <div className="relative">
-                    <Tag className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 theme-text-muted" />
+                    <Tag className="absolute left-3 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 md:h-4 md:w-4 theme-text-muted" />
                     <input
                       type="number"
                       required
@@ -1663,25 +1892,25 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                       min="0"
                       value={restockFormData.sellingPrice}
                       onChange={(e) => setRestockFormData(prev => ({ ...prev, sellingPrice: e.target.value }))}
-                      className="w-full pl-10 pr-3 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
+                      className="w-full pl-9 md:pl-10 pr-3 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
                       placeholder="Selling price"
                     />
                   </div>
-                  <p className="text-xs theme-text-muted mt-2">
+                  <p className="text-xs theme-text-muted mt-1 md:mt-2">
                     Current: UGX {restockingProduct.sellingPrice?.toLocaleString()}
                   </p>
                 </div>
               </div>
 
               {restockFormData.purchasePrice && restockFormData.sellingPrice && (
-                <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="flex justify-between text-sm mb-2">
+                <div className="p-2 md:p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="flex justify-between text-xs md:text-sm mb-1 md:mb-2">
                     <span className="theme-text">Profit Margin:</span>
                     <span className="font-semibold text-green-600">
                       {calculateProfitMargin(parseFloat(restockFormData.purchasePrice), parseFloat(restockFormData.sellingPrice))}%
                     </span>
                   </div>
-                  <div className="flex justify-between text-sm">
+                  <div className="flex justify-between text-xs md:text-sm">
                     <span className="theme-text">Profit per Unit:</span>
                     <span className="font-semibold text-green-600">
                       UGX {calculateProfitAmount(parseFloat(restockFormData.purchasePrice), parseFloat(restockFormData.sellingPrice)).toLocaleString()}
@@ -1691,25 +1920,25 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
               )}
 
               <div>
-                <label className="block font-medium theme-text text-sm mb-2">Notes</label>
+                <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">Notes</label>
                 <textarea
-                  rows="3"
+                  rows="2"
                   value={restockFormData.notes}
                   onChange={(e) => setRestockFormData(prev => ({ ...prev, notes: e.target.value }))}
-                  className="w-full px-4 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
-                  placeholder="Add any notes about this restock and price update..."
+                  className="w-full px-3 md:px-4 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
+                  placeholder="Add notes..."
                 />
               </div>
 
-              <div className="flex gap-3 pt-4 border-t theme-border">
+              <div className="flex gap-2 md:gap-3 pt-3 md:pt-4 border-t theme-border">
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow"
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 md:py-3 rounded-lg font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow text-xs md:text-sm"
                 >
                   {submitting ? (
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <div className="flex items-center justify-center gap-1 md:gap-2">
+                      <div className="animate-spin rounded-full h-3 w-3 md:h-4 md:w-4 border-b-2 border-white"></div>
                       Updating...
                     </div>
                   ) : (
@@ -1723,7 +1952,7 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                     setRestockingProduct(null);
                     setRestockFormData({ quantity: '', purchasePrice: '', sellingPrice: '', notes: '' });
                   }}
-                  className="flex-1 theme-border border theme-text-muted hover:theme-secondary py-3 rounded-lg font-semibold transition-colors"
+                  className="flex-1 theme-border border theme-text-muted hover:theme-secondary py-2 md:py-3 rounded-lg font-semibold transition-colors text-xs md:text-sm"
                 >
                   Cancel
                 </button>
@@ -1732,16 +1961,15 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
           </div>
         </div>
       )}
-
-      {/* Stock History Modal */}
+      {/* Stock History Modal - Responsive */}
       {showStockHistory && selectedProductHistory && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-          <div className="theme-surface rounded-xl shadow-2xl max-w-3xl w-full max-h-[95vh] overflow-y-auto">
-            <div className="p-4 border-b theme-border flex justify-between items-center">
-              <h2 className="text-lg font-semibold theme-text">
-                Stock History - {selectedProductHistory.product.name}
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-2 md:p-4 z-50">
+          <div className="theme-surface rounded-xl shadow-2xl max-w-full md:max-w-3xl w-full max-h-[95vh] overflow-y-auto">
+            <div className="p-3 md:p-4 border-b theme-border flex justify-between items-center">
+              <h2 className="text-base md:text-lg font-semibold theme-text">
+                Stock History
                 {selectedProductHistory.product.isLocal && (
-                  <span className="ml-2 text-sm text-blue-600">(Local Product)</span>
+                  <span className="ml-2 text-xs md:text-sm text-blue-600">(Local)</span>
                 )}
               </h2>
               <button
@@ -1751,34 +1979,34 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                 }}
                 className="theme-text-muted hover:theme-text transition-colors"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4 w-4 md:h-5 md:w-5" />
               </button>
             </div>
 
-            <div className="p-5">
-              <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="p-3 md:p-5">
+              <div className="mb-3 md:mb-4 p-2 md:p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 text-xs md:text-sm">
                   <div>
-                    <span className="theme-text-muted">Current Stock:</span>
-                    <p className="font-semibold text-xl theme-text">
+                    <span className="theme-text-muted">Current:</span>
+                    <p className="font-semibold text-lg md:text-xl theme-text">
                       {selectedProductHistory.product.stock}
                     </p>
                   </div>
                   <div>
-                    <span className="theme-text-muted">Total Restocked:</span>
-                    <p className="font-semibold text-xl text-green-600">
+                    <span className="theme-text-muted">Restocked:</span>
+                    <p className="font-semibold text-lg md:text-xl text-green-600">
                       {selectedProductHistory.product.restockedQuantity || 0}
                     </p>
                   </div>
                   <div>
-                    <span className="theme-text-muted">Total Sold:</span>
-                    <p className="font-semibold text-xl text-red-600">
+                    <span className="theme-text-muted">Sold:</span>
+                    <p className="font-semibold text-lg md:text-xl text-red-600">
                       {selectedProductHistory.product.totalSold || 0}
                     </p>
                   </div>
                   <div>
                     <span className="theme-text-muted">Status:</span>
-                    <p className={`font-semibold text-xl ${
+                    <p className={`font-semibold text-lg md:text-xl ${
                       isOutOfStock(selectedProductHistory.product) 
                         ? 'text-red-600' 
                         : isLowStock(selectedProductHistory.product)
@@ -1786,9 +2014,9 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                         : 'text-green-600'
                     }`}>
                       {isOutOfStock(selectedProductHistory.product) 
-                        ? 'Out of Stock' 
+                        ? 'Out' 
                         : isLowStock(selectedProductHistory.product)
-                        ? 'Low Stock'
+                        ? 'Low'
                         : 'In Stock'}
                     </p>
                   </div>
@@ -1796,58 +2024,57 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
               </div>
 
               {selectedProductHistory.history.length === 0 ? (
-                <div className="text-center py-8">
-                  <History className="h-12 w-12 mx-auto mb-3 theme-text-muted opacity-60" />
-                  <p className="theme-text-muted text-sm">No stock history available</p>
+                <div className="text-center py-6 md:py-8">
+                  <History className="h-8 w-8 md:h-12 md:w-12 mx-auto mb-2 md:mb-3 theme-text-muted opacity-60" />
+                  <p className="theme-text-muted text-xs md:text-sm">No history available</p>
                 </div>
               ) : (
-                <div className="space-y-3 max-h-96 overflow-y-auto">
+                <div className="space-y-2 md:space-y-3 max-h-64 md:max-h-96 overflow-y-auto">
                   {selectedProductHistory.history.map((record, index) => (
-                    <div key={index} className="p-4 border theme-border rounded-lg hover:theme-secondary transition-colors">
-                      <div className="flex justify-between items-start mb-3">
+                    <div key={index} className="p-2 md:p-4 border theme-border rounded-lg hover:theme-secondary transition-colors">
+                      <div className="flex justify-between items-start mb-2 md:mb-3">
                         <div>
-                          <p className="font-semibold theme-text text-sm flex items-center gap-2">
+                          <p className="font-semibold theme-text text-xs md:text-sm flex items-center gap-1 md:gap-2">
                             {record.type === 'restock' ? (
                               <>
-                                <PackagePlus className="h-4 w-4 text-green-600" />
+                                <PackagePlus className="h-3 w-3 md:h-4 md:w-4 text-green-600" />
                                 Restock
                               </>
                             ) : record.type === 'sale' ? (
                               <>
-                                <TrendingDown className="h-4 w-4 text-red-600" />
+                                <TrendingDown className="h-3 w-3 md:h-4 md:w-4 text-red-600" />
                                 Sale
                               </>
                             ) : (
                               <>
-                                <RefreshCw className="h-4 w-4 text-blue-600" />
+                                <RefreshCw className="h-3 w-3 md:h-4 md:w-4 text-blue-600" />
                                 Adjustment
                               </>
                             )}
                           </p>
                           <p className="theme-text-muted text-xs mt-1">
-                            <Clock className="h-3 w-3 inline mr-1" />
-                            {new Date(record.date || record.createdAt).toLocaleDateString()} at{' '}
-                            {new Date(record.date || record.createdAt).toLocaleTimeString()}
+                            <Clock className="h-2.5 w-2.5 md:h-3 md:w-3 inline mr-1" />
+                            {new Date(record.date || record.createdAt).toLocaleDateString()}
                           </p>
                         </div>
                         <div className="text-right">
-                          <p className={`font-semibold text-sm ${
+                          <p className={`font-semibold text-xs md:text-sm ${
                             record.unitsChanged > 0 ? 'text-green-600' : 'text-red-600'
                           }`}>
-                            {record.unitsChanged > 0 ? '+' : ''}{record.unitsChanged} units
+                            {record.unitsChanged > 0 ? '+' : ''}{record.unitsChanged}
                           </p>
-                          <p className="theme-text-muted text-xs mt-1">
+                          <p className="theme-text-muted text-xs mt-0.5 md:mt-1">
                             {record.previousStock} → {record.newStock}
                           </p>
                         </div>
                       </div>
                       {record.notes && (
-                        <p className="theme-text text-sm mt-2 p-2 theme-secondary rounded">
+                        <p className="theme-text text-xs md:text-sm mt-1 md:mt-2 p-1.5 md:p-2 theme-secondary rounded">
                           {record.notes}
                         </p>
                       )}
                       {record.user && (
-                        <p className="theme-text-muted text-xs mt-2">
+                        <p className="theme-text-muted text-[10px] md:text-xs mt-1 md:mt-2">
                           By: {record.user.name || 'System'}
                         </p>
                       )}
@@ -1860,26 +2087,31 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
         </div>
       )}
 
-      {/* Product Form Modal */}
+      {/* Product Form Modal - Responsive */}
       {showProductForm && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-          <div className="theme-surface rounded-xl shadow-2xl max-w-3xl w-full max-h-[95vh] overflow-y-auto">
-            <div className="p-4 border-b theme-border flex justify-between items-center">
-              <h2 className="text-lg font-semibold theme-text flex items-center gap-2">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-2 md:p-4 z-50">
+          <div className="theme-surface rounded-xl shadow-2xl max-w-full md:max-w-3xl w-full max-h-[95vh] overflow-y-auto">
+            <div className="p-3 md:p-4 border-b theme-border flex justify-between items-center">
+              <h2 className="text-base md:text-lg font-semibold theme-text flex items-center gap-2">
                 {editingProduct ? (
                   <>
-                    <Edit className="h-5 w-5" />
+                    <Edit className="h-4 w-4 md:h-5 md:w-5" />
                     Edit Product
                   </>
                 ) : (
                   <>
-                    <Plus className="h-5 w-5" />
-                    Add New Product
+                    <Plus className="h-4 w-4 md:h-5 md:w-5" />
+                    Add Product
                   </>
                 )}
                 {!isOnline && editingProduct?.isLocal && (
-                  <span className="ml-2 text-sm text-yellow-600">
-                    (Local - will sync when online)
+                  <span className="ml-2 text-xs md:text-sm text-yellow-600">
+                    (Local)
+                  </span>
+                )}
+                {isAdmin && viewMode === 'personal' && (
+                  <span className="ml-2 text-xs md:text-sm text-blue-600">
+                    (Your Product)
                   </span>
                 )}
               </h2>
@@ -1891,14 +2123,14 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                 }}
                 className="theme-text-muted hover:theme-text transition-colors"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4 w-4 md:h-5 md:w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-5 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <form onSubmit={handleSubmit} className="p-3 md:p-5 space-y-3 md:space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
                 <div>
-                  <label className="block font-medium theme-text text-sm mb-2">
+                  <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                     Product Name *
                   </label>
                   <input
@@ -1906,13 +2138,13 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                     required
                     value={formData.name}
                     onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full px-4 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
-                    placeholder="Enter product name"
+                    className="w-full px-3 md:px-4 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
+                    placeholder="Product name"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-medium theme-text text-sm mb-2">
+                  <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                     Brand *
                   </label>
                   <input
@@ -1920,13 +2152,13 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                     required
                     value={formData.brand}
                     onChange={(e) => setFormData(prev => ({ ...prev, brand: e.target.value }))}
-                    className="w-full px-4 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
-                    placeholder="Enter brand name"
+                    className="w-full px-3 md:px-4 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
+                    placeholder="Brand name"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-medium theme-text text-sm mb-2">
+                  <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                     Purchase Price *
                   </label>
                   <input
@@ -1936,13 +2168,13 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                     min="0"
                     value={formData.purchasePrice}
                     onChange={(e) => setFormData(prev => ({ ...prev, purchasePrice: e.target.value }))}
-                    className="w-full px-4 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
+                    className="w-full px-3 md:px-4 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
                     placeholder="Cost price"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-medium theme-text text-sm mb-2">
+                  <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                     Selling Price *
                   </label>
                   <input
@@ -1952,20 +2184,20 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                     min="0"
                     value={formData.sellingPrice}
                     onChange={(e) => setFormData(prev => ({ ...prev, sellingPrice: e.target.value }))}
-                    className="w-full px-4 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
+                    className="w-full px-3 md:px-4 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
                     placeholder="Selling price"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-medium theme-text text-sm mb-2">
+                  <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                     Category *
                   </label>
                   <select
                     required
                     value={formData.category}
                     onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
-                    className="w-full px-4 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
+                    className="w-full px-3 md:px-4 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
                   >
                     <option value="">Select category</option>
                     {categories.map(category => (
@@ -1977,7 +2209,7 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                 </div>
 
                 <div>
-                  <label className="block font-medium theme-text text-sm mb-2">
+                  <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                     Initial Stock *
                   </label>
                   <input
@@ -1986,13 +2218,13 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                     min="0"
                     value={formData.stock}
                     onChange={(e) => setFormData(prev => ({ ...prev, stock: e.target.value }))}
-                    className="w-full px-4 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
-                    placeholder="Initial stock quantity"
+                    className="w-full px-3 md:px-4 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
+                    placeholder="Stock quantity"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-medium theme-text text-sm mb-2">
+                  <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                     Low Stock Alert
                   </label>
                   <input
@@ -2001,48 +2233,48 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                     min="0"
                     value={formData.lowStockAlert}
                     onChange={(e) => setFormData(prev => ({ ...prev, lowStockAlert: e.target.value }))}
-                    className="w-full px-4 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
-                    placeholder="Alert when stock reaches"
+                    className="w-full px-3 md:px-4 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
+                    placeholder="Alert level"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-medium theme-text text-sm mb-2">
+                  <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                     SKU (Optional)
                   </label>
                   <input
                     type="text"
                     value={formData.sku}
                     onChange={(e) => setFormData(prev => ({ ...prev, sku: e.target.value }))}
-                    className="w-full px-4 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
-                    placeholder="Stock Keeping Unit"
+                    className="w-full px-3 md:px-4 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
+                    placeholder="SKU"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block font-medium theme-text text-sm mb-2">
+                <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                   Description *
                 </label>
                 <textarea
                   required
-                  rows="3"
+                  rows="2"
                   value={formData.description}
                   onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                  className="w-full px-4 py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-sm"
-                  placeholder="Product description..."
+                  className="w-full px-3 md:px-4 py-2 md:py-3 theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text text-xs md:text-sm"
+                  placeholder="Description..."
                 />
               </div>
 
-              {/* Image Upload Section */}
+              {/* Image Upload Section - Responsive */}
               <div>
-                <label className="block font-medium theme-text text-sm mb-2">
+                <label className="block font-medium theme-text text-xs md:text-sm mb-1 md:mb-2">
                   Product Images *
                 </label>
-                <div className="border-2 border-dashed theme-border rounded-lg p-6 text-center">
-                  <ImageIcon className="h-12 w-12 theme-text-muted mx-auto mb-3" />
-                  <p className="theme-text-muted text-sm mb-3">
-                    Upload up to 5 images (JPG, PNG, GIF)
+                <div className="border-2 border-dashed theme-border rounded-lg p-4 md:p-6 text-center">
+                  <ImageIcon className="h-8 w-8 md:h-12 md:w-12 theme-text-muted mx-auto mb-2 md:mb-3" />
+                  <p className="theme-text-muted text-xs mb-2 md:mb-3">
+                    Upload up to 5 images
                   </p>
                   <label className="cursor-pointer">
                     <input
@@ -2052,32 +2284,32 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                       onChange={handleImageUpload}
                       className="hidden"
                     />
-                    <span className="inline-block bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors">
+                    <span className="inline-block bg-blue-600 hover:bg-blue-700 text-white px-3 md:px-4 py-2 md:py-2.5 rounded-lg text-xs md:text-sm font-medium transition-colors">
                       Choose Images
                     </span>
                   </label>
                 </div>
                 
-                {/* Image Previews */}
+                {/* Image Previews - Responsive */}
                 {imagePreviews.length > 0 && (
-                  <div className="mt-4">
-                    <p className="theme-text-muted text-sm mb-2">
-                      Selected images ({imagePreviews.length}/5):
+                  <div className="mt-3 md:mt-4">
+                    <p className="theme-text-muted text-xs mb-1 md:mb-2">
+                      Selected ({imagePreviews.length}/5):
                     </p>
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-3">
                       {imagePreviews.map((preview, index) => (
                         <div key={index} className="relative">
                           <img
                             src={preview}
                             alt={`Preview ${index + 1}`}
-                            className="w-full h-24 object-cover rounded-lg"
+                            className="w-full h-20 md:h-24 object-cover rounded-lg"
                           />
                           <button
                             type="button"
                             onClick={() => removeImage(index)}
-                            className="absolute -top-2 -right-2 bg-red-600 text-white p-1 rounded-full"
+                            className="absolute -top-1 -right-1 md:-top-2 md:-right-2 bg-red-600 text-white p-0.5 md:p-1 rounded-full"
                           >
-                            <X className="h-3 w-3" />
+                            <X className="h-2.5 w-2.5 md:h-3 md:w-3" />
                           </button>
                         </div>
                       ))}
@@ -2086,15 +2318,15 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                 )}
               </div>
 
-              <div className="flex gap-3 pt-4 border-t theme-border">
+              <div className="flex gap-2 md:gap-3 pt-3 md:pt-4 border-t theme-border">
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow"
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 md:py-3 rounded-lg font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow text-xs md:text-sm"
                 >
                   {submitting ? (
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <div className="flex items-center justify-center gap-1 md:gap-2">
+                      <div className="animate-spin rounded-full h-3 w-3 md:h-4 md:w-4 border-b-2 border-white"></div>
                       {editingProduct ? 'Updating...' : 'Creating...'}
                     </div>
                   ) : (
@@ -2108,7 +2340,7 @@ ${product.description ? `Description: ${product.description.substring(0, 100)}..
                     setEditingProduct(null);
                     resetForm();
                   }}
-                  className="flex-1 theme-border border theme-text-muted hover:theme-secondary py-3 rounded-lg font-semibold transition-colors"
+                  className="flex-1 theme-border border theme-text-muted hover:theme-secondary py-2 md:py-3 rounded-lg font-semibold transition-colors text-xs md:text-sm"
                 >
                   Cancel
                 </button>

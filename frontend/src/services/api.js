@@ -15,6 +15,123 @@ const api = axios.create({
   },
 });
 
+// ==================== USER CONTEXT HELPER ====================
+const getUserContext = () => {
+  try {
+    const userStr = localStorage.getItem('user');
+    if (!userStr) return null;
+    
+    const user = JSON.parse(userStr);
+    return {
+      _id: user._id,
+      role: user.role || 'user',
+      name: user.name,
+      email: user.email
+    };
+  } catch (error) {
+    console.error('Error parsing user from localStorage:', error);
+    return null;
+  }
+};
+
+// ==================== ENHANCED QUERY STRING HELPER ====================
+const createQueryString = (params = {}) => {
+  const queryParams = new URLSearchParams();
+  
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      queryParams.append(key, value);
+    }
+  });
+  
+  const queryString = queryParams.toString();
+  return queryString ? `?${queryString}` : '';
+};
+
+// ==================== ENHANCED HELPER FUNCTION ====================
+// This adds automatic user filtering to any params object
+const addUserFilterToParams = (params = {}, endpointType = 'products') => {
+  const user = getUserContext();
+  if (!user) return params;
+  
+  // Map endpoint types to their respective user fields
+  const userFieldMap = {
+    'products': 'createdBy',
+    'sales': 'soldBy',
+    'orders': 'customer.user',
+    'analytics': 'soldBy',
+    'dashboard': 'user'
+  };
+  
+  const userField = userFieldMap[endpointType] || 'createdBy';
+  let finalParams = { ...params };
+  
+  // For regular users: ALWAYS filter by their own data
+  if (user.role !== 'admin') {
+    finalParams[userField] = user._id;
+  }
+  // For admin users: only filter if personal view is requested
+  else if (user.role === 'admin') {
+    // Check if it's a personal view request
+    const isPersonalView = (
+      params.view === 'my' ||
+      params.soldBy === 'me' ||
+      params.createdBy === 'me' ||
+      params.filter === 'my' ||
+      (endpointType === 'products' && params.createdBy) ||
+      (endpointType === 'sales' && params.soldBy)
+    );
+    
+    if (isPersonalView) {
+      finalParams[userField] = user._id;
+      if (params.view === 'my') {
+        finalParams.view = 'my';
+      }
+    }
+  }
+  
+  return finalParams;
+};
+
+// ==================== ANALYTICS HELPER FUNCTIONS ====================
+// Determine which analytics endpoint to use based on user role and view preference
+const getAnalyticsEndpoint = (viewType = 'auto') => {
+  const user = getUserContext();
+  
+  if (!user) return 'user'; // Default to personal view
+  
+  // If view type is specified, use it
+  if (viewType === 'system' && user.role === 'admin') {
+    return ''; // System view uses base endpoints
+  }
+  
+  if (viewType === 'personal') {
+    return 'user'; // Personal view uses user endpoints
+  }
+  
+  // Auto-detect: non-admin users always get personal view
+  if (user.role !== 'admin') {
+    return 'user';
+  }
+  
+  // Admin users default to system view unless specified otherwise
+  // You can store view preference in localStorage
+  const preferredView = localStorage.getItem('analyticsView') || 'system';
+  return preferredView === 'personal' ? 'user' : '';
+};
+
+// Build analytics endpoint URL
+const buildAnalyticsEndpoint = (basePath, viewType = 'auto') => {
+  const endpointPrefix = getAnalyticsEndpoint(viewType);
+  
+  if (endpointPrefix === 'user') {
+    return `/analytics/user/${basePath}`;
+  }
+  
+  // System view or admin endpoints
+  return `/analytics/${basePath}`;
+};
+
 // Request interceptor
 api.interceptors.request.use(
   (config) => {
@@ -69,19 +186,6 @@ api.interceptors.response.use(
 );
 
 // Utility Functions
-const createQueryString = (params = {}) => {
-  const queryParams = new URLSearchParams();
-  
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') {
-      queryParams.append(key, value);
-    }
-  });
-  
-  const queryString = queryParams.toString();
-  return queryString ? `?${queryString}` : '';
-};
-
 const validateRequiredFields = (data, requiredFields) => {
   const missingFields = requiredFields.filter(field => !data[field]);
   if (missingFields.length > 0) {
@@ -121,25 +225,30 @@ export const testBackendConnection = async () => {
   }
 };
 
-// Generic API Factory
+// ==================== ENHANCED GENERIC API FACTORY ====================
 const createApiMethods = (endpoint, config = {}) => {
   const { 
     requiredFields = [], 
     idRequired = true,
-    customValidations = {}
+    customValidations = {},
+    endpointType = endpoint // Default to endpoint name
   } = config;
 
   const methods = {
-    // Get all with optional filtering
+    // Get all with automatic user filtering
     getAll: (params = {}) => {
-      const queryString = createQueryString(params);
-      return api.get(`/${endpoint}${queryString}`);
+      // Add user filtering to params
+      const filteredParams = addUserFilterToParams(params, endpointType);
+      const queryString = createQueryString(filteredParams);
+      const cleanEndpoint = endpoint.replace(/^\//, '');
+      return api.get(`/${cleanEndpoint}${queryString}`);
     },
 
     // Get single by ID
     get: (id) => {
       if (idRequired) validateId(id, endpoint);
-      return api.get(`/${endpoint}/${id}`);
+      const cleanEndpoint = endpoint.replace(/^\//, '');
+      return api.get(`/${cleanEndpoint}/${id}`);
     },
 
     // Create new
@@ -152,24 +261,29 @@ const createApiMethods = (endpoint, config = {}) => {
         }
       });
       
-      return api.post(`/${endpoint}`, data);
+      const cleanEndpoint = endpoint.replace(/^\//, '');
+      return api.post(`/${cleanEndpoint}`, data);
     },
 
     // Update by ID
     update: (id, data) => {
       if (idRequired) validateId(id, endpoint);
-      return api.put(`/${endpoint}/${id}`, data);
+      const cleanEndpoint = endpoint.replace(/^\//, '');
+      return api.put(`/${cleanEndpoint}/${id}`, data);
     },
 
     // Delete by ID
     delete: (id) => {
       if (idRequired) validateId(id, endpoint);
-      return api.delete(`/${endpoint}/${id}`);
+      const cleanEndpoint = endpoint.replace(/^\//, '');
+      return api.delete(`/${cleanEndpoint}/${id}`);
     }
   };
 
   return methods;
 };
+
+// ==================== ENHANCED API CONFIGURATIONS ====================
 
 // Products API Configuration
 const productsConfig = {
@@ -178,7 +292,8 @@ const productsConfig = {
     sellingPrice: (price) => price >= 0,
     purchasePrice: (price) => price === undefined || price >= 0,
     stock: (stock) => stock === undefined || stock >= 0
-  }
+  },
+  endpointType: 'products'
 };
 
 const baseProductsAPI = createApiMethods('products', productsConfig);
@@ -190,6 +305,12 @@ export const productsAPI = {
   createProduct: baseProductsAPI.create,
   updateProduct: baseProductsAPI.update,
   deleteProduct: baseProductsAPI.delete,
+  
+  // ADMIN-SPECIFIC ENDPOINTS (already filtered by backend)
+  getAdminProducts: (params = {}) => {
+    const queryString = createQueryString(params);
+    return api.get(`/products/admin/my-products${queryString}`);
+  },
   
   // Product-specific methods
   likeProduct: (id) => {
@@ -231,16 +352,30 @@ export const productsAPI = {
     return api.get(`/products/${id}/stock-history`);
   },
 
-  // NEW: Get product performance for analytics
+  // Product performance for analytics
   getProductPerformance: (productId, period = 'week') => {
     validateId(productId, 'Product');
     const queryString = createQueryString({ period });
     return api.get(`/products/${productId}/performance${queryString}`);
   },
 
-  // NEW: Get product statistics for analytics
+  // Product statistics for analytics
   getProductStats: () => {
     return api.get('/products/admin/stats');
+  },
+
+  // Get top products analytics
+  getTopProductsAnalytics: (params = {}) => {
+    const filteredParams = addUserFilterToParams(params, 'products');
+    const queryString = createQueryString(filteredParams);
+    return api.get(`/products/analytics/top-products${queryString}`);
+  },
+
+  // Get product tracking data
+  getProductTracking: (params = {}) => {
+    const filteredParams = addUserFilterToParams(params, 'products');
+    const queryString = createQueryString(filteredParams);
+    return api.get(`/products/analytics/tracking${queryString}`);
   }
 };
 
@@ -249,7 +384,8 @@ const salesConfig = {
   requiredFields: ['items'],
   customValidations: {
     items: (items) => Array.isArray(items) && items.length > 0
-  }
+  },
+  endpointType: 'sales'
 };
 
 const baseSalesAPI = createApiMethods('sales', salesConfig);
@@ -258,9 +394,20 @@ export const salesAPI = {
   // Keep original method names
   getSales: baseSalesAPI.getAll,
   getSale: baseSalesAPI.get,
-  createSale: baseSalesAPI.create,
+  createSale: baseProductsAPI.create,
   updateSale: baseSalesAPI.update,
   deleteSale: baseSalesAPI.delete,
+  
+  // ADMIN-SPECIFIC ENDPOINTS
+  getAdminSales: (params = {}) => {
+    const queryString = createQueryString({ ...params, view: 'my' });
+    return api.get(`/sales${queryString}`);
+  },
+  
+  getAdminSalesStats: (params = {}) => {
+    const queryString = createQueryString({ ...params, view: 'my' });
+    return api.get(`/sales/stats${queryString}`);
+  },
   
   // Sales-specific methods
   updatePayment: (id, paymentData) => {
@@ -273,20 +420,22 @@ export const salesAPI = {
     return api.put(`/sales/${id}/cancel`);
   },
   
-  // NEW METHOD: Resume cancelled sale
+  // Resume cancelled sale
   resumeSale: (id) => {
     validateId(id, 'Sale');
     return api.put(`/sales/${id}/resume`);
   },
   
   getSalesStats: (params = {}) => {
-    const queryString = createQueryString(params);
+    const filteredParams = addUserFilterToParams(params, 'sales');
+    const queryString = createQueryString(filteredParams);
     return api.get(`/sales/stats${queryString}`);
   },
 
-  // NEW: Get detailed sales analytics
+  // Get detailed sales analytics
   getSalesAnalytics: (params = {}) => {
-    const queryString = createQueryString(params);
+    const filteredParams = addUserFilterToParams(params, 'analytics');
+    const queryString = createQueryString(filteredParams);
     return api.get(`/sales/analytics${queryString}`);
   }
 };
@@ -294,7 +443,8 @@ export const salesAPI = {
 // Auth API Configuration
 const authConfig = {
   requiredFields: ['email', 'password'],
-  idRequired: false
+  idRequired: false,
+  endpointType: 'auth'
 };
 
 const baseAuthAPI = createApiMethods('auth', authConfig);
@@ -324,106 +474,397 @@ export const authAPI = {
   }
 };
 
-// Cart API Configuration
-const cartConfig = {
-  idRequired: false
+// Orders API Configuration
+const ordersConfig = {
+  requiredFields: ['items', 'customerInfo'],
+  idRequired: true,
+  customValidations: {
+    items: (items) => Array.isArray(items) && items.length > 0,
+    paymentMethod: (method) => ['onDelivery', 'mtn', 'airtel', 'card'].includes(method)
+  },
+  endpointType: 'orders'
 };
 
-const baseCartAPI = createApiMethods('cart', cartConfig);
-
-export const cartAPI = {
-  // Keep original method names
-  getCart: baseCartAPI.getAll,
-  clearCart: baseCartAPI.delete,
-  
-  // Cart-specific methods
-  addToCart: (productId, quantity = 1) => {
-    validateId(productId, 'Product');
-    return api.post('/cart', { productId, quantity });
-  },
-  
-  updateCartItem: (productId, quantity) => {
-    validateId(productId, 'Product');
-    return api.put(`/cart/${productId}`, { quantity });
-  },
-  
-  removeFromCart: (productId) => {
-    validateId(productId, 'Product');
-    return api.delete(`/cart/${productId}`);
-  }
-};
-
-// Orders API
-const baseOrdersAPI = createApiMethods('orders');
+const baseOrdersAPI = createApiMethods('orders', ordersConfig);
 
 export const ordersAPI = {
+  // Keep original method names for backward compatibility
   getOrders: baseOrdersAPI.getAll,
   getOrder: baseOrdersAPI.get,
   createOrder: baseOrdersAPI.create,
   updateOrder: baseOrdersAPI.update,
   deleteOrder: baseOrdersAPI.delete,
   
-  updateOrderStatus: (id, status) => {
+  // ADMIN-SPECIFIC ENDPOINTS
+  getAdminOrders: (params = {}) => {
+    const queryString = createQueryString(params);
+    return api.get(`/orders/admin/my-orders${queryString}`);
+  },
+  
+  // Order-specific methods
+  updateOrderStatus: (id, statusData) => {
     validateId(id, 'Order');
-    return api.put(`/orders/${id}/status`, { status });
+    return api.put(`/orders/${id}/status`, statusData);
+  },
+  
+  cancelOrder: (id, reason = '') => {
+    validateId(id, 'Order');
+    return api.put(`/orders/${id}/cancel`, { reason });
+  },
+  
+  // Order workflow methods
+  processOrder: (id) => {
+    validateId(id, 'Order');
+    return api.put(`/orders/${id}/process`);
+  },
+  
+  deliverOrder: (id) => {
+    validateId(id, 'Order');
+    return api.put(`/orders/${id}/deliver`);
+  },
+  
+  rejectOrder: (id, reason = '') => {
+    validateId(id, 'Order');
+    return api.put(`/orders/${id}/reject`, { reason });
+  },
+  
+  confirmDelivery: (id, confirmationNote = '') => {
+    validateId(id, 'Order');
+    return api.put(`/orders/${id}/confirm-delivery`, { confirmationNote });
+  },
+  
+  // User orders
+  getMyOrders: (params = {}) => {
+    // User orders are already filtered by backend
+    const queryString = createQueryString(params);
+    return api.get(`/orders/my-orders${queryString}`);
+  },
+  
+  // Order statistics
+  getOrderStats: (params = {}) => {
+    const filteredParams = addUserFilterToParams({ ...params, view: 'my' }, 'orders');
+    const queryString = createQueryString(filteredParams);
+    return api.get(`/orders/stats${queryString}`);
+  },
+  
+  // Dashboard statistics
+  getDashboardStats: () => {
+    return api.get('/orders/dashboard/stats');
   }
 };
 
-// Analytics API - NEW: Dedicated analytics endpoints
+// ==================== ENHANCED ANALYTICS API ====================
 export const analyticsAPI = {
-  // Sales analytics
-  getSalesOverview: (params = {}) => {
-    const queryString = createQueryString(params);
-    return api.get(`/analytics/sales/overview${queryString}`);
+  // ==================== SIMPLIFIED ANALYTICS API ====================
+  // Main analytics methods with automatic view detection
+  
+  // Sales Overview
+  getSalesOverview: (params = {}, viewType = 'auto') => {
+    const filteredParams = addUserFilterToParams(params, 'analytics');
+    const queryString = createQueryString(filteredParams);
+    const endpoint = buildAnalyticsEndpoint('sales-overview', viewType);
+    return api.get(`${endpoint}${queryString}`);
   },
-
-  // Product analytics
-  getProductAnalytics: (params = {}) => {
-    const queryString = createQueryString(params);
-    return api.get(`/analytics/products${queryString}`);
+  
+  // Product Analytics
+  getProductAnalytics: (params = {}, viewType = 'auto') => {
+    const filteredParams = addUserFilterToParams(params, 'products');
+    const queryString = createQueryString(filteredParams);
+    const endpoint = buildAnalyticsEndpoint('product-analytics', viewType);
+    return api.get(`${endpoint}${queryString}`);
   },
-
-  // Inventory analytics
-  getInventoryAnalytics: () => {
-    return api.get('/analytics/inventory');
+  
+  // Inventory Analytics
+  getInventoryAnalytics: (params = {}, viewType = 'auto') => {
+    const filteredParams = addUserFilterToParams(params, 'products');
+    const queryString = createQueryString(filteredParams);
+    const endpoint = buildAnalyticsEndpoint('inventory', viewType);
+    return api.get(`${endpoint}${queryString}`);
   },
-
-  // Performance metrics
-  getPerformanceMetrics: (params = {}) => {
-    const queryString = createQueryString(params);
-    return api.get(`/analytics/performance${queryString}`);
+  
+  // Performance Metrics
+  getPerformanceMetrics: (params = {}, viewType = 'auto') => {
+    const filteredParams = addUserFilterToParams(params, 'analytics');
+    const queryString = createQueryString(filteredParams);
+    const endpoint = buildAnalyticsEndpoint('performance', viewType);
+    return api.get(`${endpoint}${queryString}`);
   },
-
-  // Daily business performance
-  getDailyPerformance: (date) => {
-    const queryString = createQueryString({ date });
-    return api.get(`/analytics/daily-performance${queryString}`);
+  
+  // Daily Performance
+  getDailyPerformance: (params = {}, viewType = 'auto') => {
+    const filteredParams = addUserFilterToParams(params, 'analytics');
+    const queryString = createQueryString(filteredParams);
+    const endpoint = buildAnalyticsEndpoint('daily-performance', viewType);
+    return api.get(`${endpoint}${queryString}`);
   },
-
-  // Product tracking data
-  getProductTracking: (limit = 10) => {
-    const queryString = createQueryString({ limit });
-    return api.get(`/analytics/product-tracking${queryString}`);
+  
+  // Product Tracking
+  getProductTracking: (params = {}, viewType = 'auto') => {
+    const filteredParams = addUserFilterToParams(params, 'products');
+    const queryString = createQueryString(filteredParams);
+    const endpoint = buildAnalyticsEndpoint('product-tracking', viewType);
+    return api.get(`${endpoint}${queryString}`);
+  },
+  
+  // ==================== EXPLICIT VIEW METHODS ====================
+  // For when you want to explicitly specify the view
+  
+  // Personal View (user's own data only)
+  getPersonalSalesOverview: (params = {}) => {
+    return this.getSalesOverview(params, 'personal');
+  },
+  
+  getPersonalProductAnalytics: (params = {}) => {
+    return this.getProductAnalytics(params, 'personal');
+  },
+  
+  getPersonalInventoryAnalytics: (params = {}) => {
+    return this.getInventoryAnalytics(params, 'personal');
+  },
+  
+  getPersonalPerformanceMetrics: (params = {}) => {
+    return this.getPerformanceMetrics(params, 'personal');
+  },
+  
+  getPersonalDailyPerformance: (params = {}) => {
+    return this.getDailyPerformance(params, 'personal');
+  },
+  
+  getPersonalProductTracking: (params = {}) => {
+    return this.getProductTracking(params, 'personal');
+  },
+  
+  // System View (admin sees all data)
+  getSystemSalesOverview: (params = {}) => {
+    return this.getSalesOverview(params, 'system');
+  },
+  
+  getSystemProductAnalytics: (params = {}) => {
+    return this.getProductAnalytics(params, 'system');
+  },
+  
+  getSystemInventoryAnalytics: (params = {}) => {
+    return this.getInventoryAnalytics(params, 'system');
+  },
+  
+  getSystemPerformanceMetrics: (params = {}) => {
+    return this.getPerformanceMetrics(params, 'system');
+  },
+  
+  getSystemDailyPerformance: (params = {}) => {
+    return this.getDailyPerformance(params, 'system');
+  },
+  
+  getSystemProductTracking: (params = {}) => {
+    return this.getProductTracking(params, 'system');
+  },
+  
+  // ==================== VIEW MANAGEMENT ====================
+  // Helper to manage view preferences
+  
+  setAnalyticsView: (viewType) => {
+    if (viewType !== 'personal' && viewType !== 'system') {
+      throw new Error('View type must be "personal" or "system"');
+    }
+    localStorage.setItem('analyticsView', viewType);
+  },
+  
+  getAnalyticsView: () => {
+    return localStorage.getItem('analyticsView') || 'system';
+  },
+  
+  // Check if user is admin
+  isAdminUser: () => {
+    const user = getUserContext();
+    return user?.role === 'admin';
+  },
+  
+  // Get current user info
+  getCurrentUser: () => {
+    return getUserContext();
   }
 };
 
-// Dashboard API - NEW: Consolidated dashboard data
+// ==================== NOTIFICATION API ====================
+export const notificationsAPI = {
+  // Get all notifications
+  getNotifications: (params = {}) => {
+    const queryString = createQueryString(params);
+    return api.get(`/notifications${queryString}`);
+  },
+  
+  // Get single notification
+  getNotification: (id) => {
+    validateId(id, 'Notification');
+    return api.get(`/notifications/${id}`);
+  },
+  
+  // Delete notification
+  deleteNotification: (id) => {
+    validateId(id, 'Notification');
+    return api.delete(`/notifications/${id}`);
+  },
+  
+  // Get unread count
+  getUnreadCount: () => {
+    return api.get('/notifications/unread-count');
+  },
+  
+  // Mark as read
+  markAsRead: (id) => {
+    validateId(id, 'Notification');
+    return api.put(`/notifications/${id}/read`);
+  },
+  
+  // Mark all as read
+  markAllAsRead: () => {
+    return api.put('/notifications/read-all');
+  },
+  
+  // Clear all notifications
+  clearAllNotifications: () => {
+    return api.delete('/notifications');
+  },
+  
+  // Real-time polling helper
+  pollNotifications: async (onNewNotifications, interval = 10000) => {
+    const poll = async () => {
+      try {
+        const response = await api.get('/notifications/unread-count');
+        if (response.data.success && response.data.unreadCount > 0) {
+          const notificationsResponse = await api.get('/notifications?limit=10');
+          if (notificationsResponse.data.success) {
+            onNewNotifications(notificationsResponse.data.notifications);
+          }
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      }
+    };
+    
+    await poll();
+    const pollInterval = setInterval(poll, interval);
+    return () => clearInterval(pollInterval);
+  }
+};
+
+// ==================== ENHANCED DASHBOARD API ====================
 export const dashboardAPI = {
-  getOverview: () => {
+  // User dashboard (own data)
+  getDashboardOverview: () => {
     return api.get('/dashboard/overview');
   },
-
+  
   getQuickStats: () => {
     return api.get('/dashboard/quick-stats');
   },
-
-  getRecentActivity: (limit = 10) => {
-    const queryString = createQueryString({ limit });
+  
+  getRecentActivity: (params = {}) => {
+    const filteredParams = addUserFilterToParams(params, 'dashboard');
+    const queryString = createQueryString(filteredParams);
     return api.get(`/dashboard/recent-activity${queryString}`);
+  },
+  
+  // ADMIN-SPECIFIC DASHBOARD ENDPOINTS
+  getAdminDashboardOverview: () => {
+    return api.get('/dashboard/admin/overview');
+  },
+  
+  getAdminQuickStats: () => {
+    return api.get('/dashboard/admin/quick-stats');
+  },
+  
+  getAdminRecentActivity: (params = {}) => {
+    const filteredParams = addUserFilterToParams(params, 'dashboard');
+    const queryString = createQueryString(filteredParams);
+    return api.get(`/dashboard/admin/recent-activity${queryString}`);
   }
 };
 
-// Enhanced utility functions
+// ==================== ADMIN API ====================
+export const adminAPI = {
+  // Create initial admin (unprotected)
+  createAdmin: (adminData) => {
+    validateRequiredFields(adminData, ['name', 'email', 'password']);
+    return api.post('/admin/create-admin', adminData);
+  },
+  
+  // Register new admin (requires existing admin authentication)
+  registerAdmin: (adminData) => {
+    validateRequiredFields(adminData, ['name', 'email', 'password']);
+    return api.post('/admin/register', adminData);
+  },
+  
+  // Get all admin users
+  getAdmins: () => {
+    return api.get('/admin/admins');
+  },
+  
+  // Get all users
+  getUsers: (params = {}) => {
+    const queryString = createQueryString(params);
+    return api.get(`/admin/users${queryString}`);
+  },
+  
+  // Search users
+  searchUsers: (query) => {
+    if (!query || query.trim().length < 2) {
+      throw new Error('Search query must be at least 2 characters long');
+    }
+    return api.get(`/admin/users/search?q=${encodeURIComponent(query)}`);
+  },
+  
+  // Get user by ID
+  getUserById: (id) => {
+    validateId(id, 'User');
+    return api.get(`/admin/users/${id}`);
+  },
+  
+  // Get user activity
+  getUserActivity: (id) => {
+    validateId(id, 'User');
+    return api.get(`/admin/users/${id}/activity`);
+  },
+  
+  // Update user role
+  updateUserRole: (id, roleData) => {
+    validateId(id, 'User');
+    validateRequiredFields(roleData, ['role']);
+    return api.put(`/admin/users/${id}/role`, roleData);
+  },
+  
+  // Toggle user status
+  toggleUserStatus: (id, statusData) => {
+    validateId(id, 'User');
+    validateRequiredFields(statusData, ['isActive']);
+    return api.put(`/admin/users/${id}/status`, statusData);
+  },
+  
+  // Reset user password
+  resetUserPassword: (id, passwordData) => {
+    validateId(id, 'User');
+    validateRequiredFields(passwordData, ['newPassword']);
+    return api.put(`/admin/users/${id}/reset-password`, passwordData);
+  },
+  
+  // Delete user (soft delete)
+  deleteUser: (id) => {
+    validateId(id, 'User');
+    return api.delete(`/admin/users/${id}`);
+  },
+  
+  // Dashboard statistics
+  getDashboardStats: () => {
+    return api.get('/admin/dashboard');
+  },
+  
+  // Admin's personal dashboard statistics
+  getMyDashboardStats: () => {
+    return api.get('/admin/my-dashboard');
+  }
+};
+
+// ==================== ADDITIONAL UTILITY FUNCTIONS ====================
 export const checkBackendHealth = async () => {
   try {
     const response = await api.get('/health');
@@ -457,6 +898,11 @@ export const getApiStatus = async () => {
     timestamp: new Date().toISOString(),
     environment: import.meta.env.MODE
   };
+};
+
+// ==================== NEW HELPER FOR FRONTEND COMPONENTS ====================
+export const createUserFilteredParams = (params = {}, endpointType = 'products') => {
+  return addUserFilterToParams(params, endpointType);
 };
 
 // Export configured axios instance

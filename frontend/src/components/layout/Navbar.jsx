@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useCartStore } from '../../stores/cartStore';
 import { useTheme } from '../../context/ThemeContext';
 import ThemeSelector from './ThemeSelector';
+import NotificationBell from '../NotificationBell'; // ADD THIS IMPORT
 
 const Navbar = () => {
   const { user, logout } = useAuth();
@@ -190,6 +191,9 @@ const Navbar = () => {
               </button>
             )}
             
+            {/* NOTIFICATION BELL - Only for admin users */}
+            {user?.role === 'admin' && <NotificationBell />}
+            
             {/* Cart - Only show for regular users (not admin) */}
             {user?.role !== 'admin' && (
               <Link 
@@ -284,6 +288,13 @@ const Navbar = () => {
               >
                 <Download className="h-5 w-5" />
               </button>
+            )}
+            
+            {/* Notification Bell - Mobile - Only for admin users */}
+            {user?.role === 'admin' && (
+              <div className="relative">
+                <NotificationBell />
+              </div>
             )}
             
             {/* Cart - Only show for regular users (not admin) */}
@@ -384,6 +395,28 @@ const Navbar = () => {
                   onClick={closeMobileMenu}
                 >
                   Admin Dashboard
+                </Link>
+              )}
+
+              {/* Notification Link - Mobile - Only for admin users */}
+              {user?.role === 'admin' && (
+                <Link 
+                  to="#" 
+                  className={`flex items-center gap-2 py-2 px-2 rounded transition-colors text-sm theme-text-muted hover:theme-primary-text hover:theme-secondary`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    // Handle mobile notification view
+                    navigate('/admin/orders');
+                    setIsMenuOpen(false);
+                  }}
+                >
+                  <div className="relative">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                      <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                    </svg>
+                  </div>
+                  Notifications
                 </Link>
               )}
 

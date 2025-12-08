@@ -44,8 +44,6 @@ const CreateSaleTab = ({
   const [markedProducts, setMarkedProducts] = useState(new Set());
   const [workflowStep, setWorkflowStep] = useState('select'); // 'select', 'review', 'details'
   const [mobileView, setMobileView] = useState(false);
-  const saleItemsRef = useRef(null);
-  const saleDetailsRef = useRef(null);
 
   // Refs for tracking
   const hasInitializedRef = useRef(false);
@@ -361,9 +359,6 @@ const CreateSaleTab = ({
     setMarkedProducts(new Set());
     if (mobileView) {
       setWorkflowStep('review');
-      setTimeout(() => {
-        saleItemsRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
     }
     setError('');
   };
@@ -1209,313 +1204,220 @@ const CreateSaleTab = ({
   // Mobile workflow navigation
   const goToSelectProducts = () => {
     setWorkflowStep('select');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const goToReviewItems = () => {
     setWorkflowStep('review');
-    setTimeout(() => {
-      saleItemsRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, 100);
   };
 
   const goToSaleDetails = () => {
     setWorkflowStep('details');
-    setTimeout(() => {
-      saleDetailsRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, 100);
   };
 
-  // Mobile workflow header
-  const MobileWorkflowHeader = () => (
-    <div className="md:hidden theme-surface border-b theme-border sticky top-0 z-10">
-      <div className="flex items-center justify-between p-3">
+  // Compact mobile header
+  const MobileCompactHeader = () => (
+    <div className="md:hidden theme-surface border-b theme-border sticky top-0 z-10 py-1">
+      <div className="flex items-center justify-between px-2">
         <button
           onClick={() => {
             if (workflowStep === 'review') goToSelectProducts();
             else if (workflowStep === 'details') goToReviewItems();
           }}
-          className="flex items-center gap-2 theme-text"
+          className="flex items-center gap-1 theme-text text-xs"
         >
-          {workflowStep !== 'select' && <ChevronLeft className="h-5 w-5" />}
+          {workflowStep !== 'select' && <ChevronLeft className="h-4 w-4" />}
           <span className="font-medium">
-            {workflowStep === 'select' ? 'Select Products' :
-             workflowStep === 'review' ? 'Review Items' :
-             'Sale Details'}
+            {workflowStep === 'select' ? 'Select' :
+             workflowStep === 'review' ? 'Review' :
+             'Details'}
           </span>
         </button>
         
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            <div className={`w-3 h-3 rounded-full ${workflowStep === 'select' ? 'bg-blue-600' : 'bg-gray-300'}`} />
-            <div className={`w-3 h-3 rounded-full ${workflowStep === 'review' ? 'bg-blue-600' : 'bg-gray-300'}`} />
-            <div className={`w-3 h-3 rounded-full ${workflowStep === 'details' ? 'bg-blue-600' : 'bg-gray-300'}`} />
-          </div>
+        <div className="flex items-center gap-1">
+          <div className={`w-2 h-2 rounded-full ${workflowStep === 'select' ? 'bg-blue-600' : 'bg-gray-300'}`} />
+          <div className={`w-2 h-2 rounded-full ${workflowStep === 'review' ? 'bg-blue-600' : 'bg-gray-300'}`} />
+          <div className={`w-2 h-2 rounded-full ${workflowStep === 'details' ? 'bg-blue-600' : 'bg-gray-300'}`} />
         </div>
       </div>
       
-      {/* Step indicator */}
-      <div className="px-3 pb-3">
-        <div className="flex items-center justify-between text-xs theme-text-muted">
-          <div className={`text-center ${workflowStep === 'select' ? 'text-blue-600 font-semibold' : ''}`}>
-            <div className="mx-auto mb-1">1</div>
-            <div>Select</div>
-          </div>
-          <div className="flex-1 h-px bg-gray-300 mx-2"></div>
-          <div className={`text-center ${workflowStep === 'review' ? 'text-blue-600 font-semibold' : ''}`}>
-            <div className="mx-auto mb-1">2</div>
-            <div>Review</div>
-          </div>
-          <div className="flex-1 h-px bg-gray-300 mx-2"></div>
-          <div className={`text-center ${workflowStep === 'details' ? 'text-blue-600 font-semibold' : ''}`}>
-            <div className="mx-auto mb-1">3</div>
-            <div>Details</div>
-          </div>
+      {/* Selected count */}
+      {workflowStep === 'select' && markedProducts.size > 0 && (
+        <div className="px-2 mt-1 flex items-center justify-between">
+          <span className="text-xs theme-text">
+            {markedProducts.size} selected
+          </span>
+          <button
+            onClick={() => setMarkedProducts(new Set())}
+            className="text-xs text-red-600 hover:text-red-800"
+          >
+            Clear
+          </button>
         </div>
-      </div>
+      )}
     </div>
   );
 
-  // Mobile action buttons
-  const MobileActionButtons = () => {
-    if (workflowStep === 'select') {
-      return (
-        <div className="md:hidden fixed bottom-0 left-0 right-0 theme-surface border-t theme-border p-4 z-20 shadow-lg">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm theme-text">
-              {markedProducts.size} product{markedProducts.size !== 1 ? 's' : ''} selected
-            </span>
-            <button
-              onClick={() => setMarkedProducts(new Set())}
-              className="text-xs text-red-600 hover:text-red-800"
-            >
-              Clear All
-            </button>
-          </div>
-          <button
-            onClick={addMarkedProductsToSale}
-            disabled={markedProducts.size === 0}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            <Check className="h-5 w-5" />
-            Add {markedProducts.size} Item{markedProducts.size !== 1 ? 's' : ''} to Sale
-          </button>
-        </div>
-      );
-    }
+  // Floating add button for mobile
+  const FloatingAddButton = () => {
+    if (!mobileView || workflowStep !== 'select' || markedProducts.size === 0) return null;
     
-    if (workflowStep === 'review') {
-      return (
-        <div className="md:hidden fixed bottom-0 left-0 right-0 theme-surface border-t theme-border p-4 z-20 shadow-lg">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm theme-text">
-              {selectedProducts.length} item{selectedProducts.length !== 1 ? 's' : ''} in sale
-            </span>
-            <button
-              onClick={resetForm}
-              className="text-xs text-red-600 hover:text-red-800"
-            >
-              Clear All
-            </button>
-          </div>
-          <button
-            onClick={goToSaleDetails}
-            disabled={selectedProducts.length === 0}
-            className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            <ChevronRight className="h-5 w-5" />
-            Proceed to Sale Details
-          </button>
-        </div>
-      );
-    }
+    return (
+      <button
+        onClick={addMarkedProductsToSale}
+        className="fixed bottom-4 right-4 bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-full shadow-lg z-30 transition-all duration-200"
+        title={`Add ${markedProducts.size} item${markedProducts.size !== 1 ? 's' : ''} to sale`}
+      >
+        <Check className="h-4 w-4" />
+      </button>
+    );
+  };
+
+  // Compact mobile floating review button
+  const FloatingReviewButton = () => {
+    if (!mobileView || workflowStep !== 'review' || selectedProducts.length === 0) return null;
     
-    return null;
+    return (
+      <button
+        onClick={goToSaleDetails}
+        className="fixed bottom-4 right-4 bg-green-600 hover:bg-green-700 text-white p-2 rounded-full shadow-lg z-30 transition-all duration-200"
+        title="Proceed to sale details"
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    );
   };
 
   return (
-    <div className="space-y-4 p-2">
-      {/* Mobile Workflow Header */}
-      {mobileView && <MobileWorkflowHeader />}
+    <div className="space-y-2 p-1 md:space-y-4 md:p-2">
+      {/* Mobile Compact Header */}
+      {mobileView && <MobileCompactHeader />}
 
-      {/* Network Status */}
+      {/* Network Status - Compact on mobile */}
       {!isOnline && (
-        <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg dark:bg-yellow-900/20 dark:border-yellow-800">
+        <div className="p-2 md:p-3 bg-yellow-50 border border-yellow-200 rounded-lg dark:bg-yellow-900/20 dark:border-yellow-800">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CloudOff className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
+            <div className="flex items-center gap-1 md:gap-2">
+              <CloudOff className="h-3 w-3 md:h-4 md:w-4 text-yellow-600 dark:text-yellow-500" />
               <div>
-                <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-200">Offline Mode</p>
-                <p className="text-xs text-yellow-700 dark:text-yellow-300">
-                  Sales will be saved locally and synced when internet returns
+                <p className="text-xs md:text-sm font-semibold text-yellow-800 dark:text-yellow-200">Offline Mode</p>
+                <p className="text-[10px] md:text-xs text-yellow-700 dark:text-yellow-300">
+                  Sales saved locally
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              {offlineSalesCount > 0 && (
-                <span className="bg-yellow-100 dark:bg-yellow-800 px-2 py-1 rounded text-xs text-yellow-800 dark:text-yellow-200">
-                  {offlineSalesCount} pending sales
-                </span>
-              )}
-              <button
-                onClick={handleForceCacheRefresh}
-                className="flex items-center gap-1.5 border border-yellow-300 dark:border-yellow-700 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-50 dark:hover:bg-yellow-900/50 px-2.5 py-1 rounded text-xs transition-colors"
-                title="Force refresh product cache"
-              >
-                <RefreshCw className="h-3 w-3" />
-                Refresh Cache
-              </button>
-            </div>
+            {offlineSalesCount > 0 && (
+              <span className="bg-yellow-100 dark:bg-yellow-800 px-1.5 py-0.5 rounded text-[10px] md:text-xs text-yellow-800 dark:text-yellow-200">
+                {offlineSalesCount}
+              </span>
+            )}
           </div>
         </div>
       )}
 
-      {/* Success Message */}
+      {/* Success Message - Compact */}
       {success && (
-        <div className={`p-3 ${
+        <div className={`p-2 md:p-3 ${
           success.showPrint 
             ? 'bg-green-50 border border-green-200 rounded-lg dark:bg-green-900/20 dark:border-green-800' 
-            : 'bg-green-50 border border-green-200 rounded text-xs dark:bg-green-900/20 dark:border-green-800'
+            : 'bg-green-50 border border-green-200 rounded dark:bg-green-900/20 dark:border-green-800'
         }`}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-500" />
+            <div className="flex items-center gap-1 md:gap-2">
+              <CheckCircle className="h-3 w-3 md:h-4 md:w-4 text-green-600 dark:text-green-500" />
               <div>
-                <p className="text-sm font-semibold text-green-800 dark:text-green-200">{success.message}</p>
-                <p className="text-xs text-green-700 dark:text-green-300">
-                  {success.saleNumber !== 'CACHE' ? `Sale #${success.saleNumber}` : 'Cache refreshed'}
-                </p>
+                <p className="text-xs md:text-sm font-semibold text-green-800 dark:text-green-200">{success.message}</p>
+                {success.saleNumber !== 'CACHE' && (
+                  <p className="text-[10px] md:text-xs text-green-700 dark:text-green-300">
+                    #{success.saleNumber}
+                  </p>
+                )}
               </div>
             </div>
             {success.showPrint && (
               <button
                 onClick={printOfflineReceipt}
-                className="flex items-center gap-1 bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 text-white px-3 py-1 rounded text-sm transition-colors"
+                className="flex items-center gap-1 bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 text-white px-2 py-1 rounded text-xs md:text-sm transition-colors"
               >
                 <Printer className="h-3 w-3" />
-                Print Receipt
+                <span className="hidden sm:inline">Print</span>
               </button>
             )}
           </div>
         </div>
       )}
 
-      {/* Error Message */}
+      {/* Error Message - Compact */}
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded flex items-center justify-between dark:bg-red-900/20 dark:border-red-800">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-500" />
-            <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+        <div className="p-2 md:p-3 bg-red-50 border border-red-200 rounded flex items-center justify-between dark:bg-red-900/20 dark:border-red-800">
+          <div className="flex items-center gap-1 md:gap-2 flex-1 min-w-0">
+            <AlertCircle className="h-3 w-3 md:h-4 md:w-4 text-red-600 dark:text-red-500 flex-shrink-0" />
+            <p className="text-xs md:text-sm text-red-700 dark:text-red-300 truncate">{error}</p>
           </div>
           {error.includes('backend') && onProductsRefresh && (
             <button
               onClick={handleRetryProducts}
-              className="ml-2 bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600 text-white px-3 py-1.5 rounded flex items-center gap-1 text-sm transition-colors"
+              className="ml-1 bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600 text-white px-2 py-1 rounded flex items-center gap-1 text-xs transition-colors flex-shrink-0"
             >
               <RefreshCw className="h-3 w-3" />
-              Retry
             </button>
           )}
         </div>
       )}
 
-      {/* Stock Update Debug Panel (only in development) */}
-      {process.env.NODE_ENV === 'development' && productStockUpdates.length > 0 && (
-        <div className="p-3 bg-gray-100 border border-gray-300 rounded text-xs dark:bg-gray-900 dark:border-gray-700">
-          <div className="flex items-center gap-2 mb-2">
-            <Database className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-            <span className="font-medium text-gray-700 dark:text-gray-300">Recent Stock Updates:</span>
-            <button 
-              onClick={() => setProductStockUpdates([])}
-              className="ml-auto text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            >
-              Clear
-            </button>
-          </div>
-          <div className="space-y-1 max-h-24 overflow-y-auto">
-            {productStockUpdates.map((update, index) => (
-              <div key={index} className="flex items-center gap-3 text-gray-600 dark:text-gray-400 p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded">
-                <span className="text-xs font-mono">{update.timestamp}</span>
-                <span>ID: {update.productId?.substring(0, 8)}...</span>
-                <span className="font-medium">
-                  {update.oldStock} → <span className="text-red-600 dark:text-red-400">{update.newStock}</span>
-                </span>
-                <span className="text-red-600 dark:text-red-400 text-xs">
-                  (Δ {update.newStock - update.oldStock})
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* THREE COLUMN LAYOUT */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-4">
         
         {/* COLUMN 1: Products & Customer */}
-        <div className={`space-y-4 ${mobileView && workflowStep !== 'select' ? 'hidden md:block' : ''}`}>
-          {/* Product Search */}
-          <div className="theme-surface rounded-lg shadow-sm border theme-border p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold theme-text flex items-center gap-2">
-                <Package className="h-4 w-4" />
+        <div className={`space-y-2 md:space-y-4 ${mobileView && workflowStep !== 'select' ? 'hidden md:block' : ''}`}>
+          {/* Product Search - Compact */}
+          <div className="theme-surface rounded-lg shadow-sm border theme-border p-2 md:p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs md:text-sm font-semibold theme-text flex items-center gap-1 md:gap-2">
+                <Package className="h-3 w-3 md:h-4 md:w-4" />
                 Products
-                <span className="text-xs font-normal theme-text-muted">
-                  ({products.length} available)
+                <span className="text-[10px] md:text-xs font-normal theme-text-muted">
+                  ({products.length})
                 </span>
               </h3>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 md:gap-2">
                 {onProductsRefresh && (
                   <button
                     onClick={handleRetryProducts}
                     disabled={productsLoading}
-                    className="flex items-center gap-1.5 border theme-border theme-text-muted hover:theme-secondary px-2.5 py-1.5 rounded text-xs transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1 border theme-border theme-text-muted hover:theme-secondary px-1.5 py-1 md:px-2.5 md:py-1.5 rounded text-[10px] md:text-xs transition-colors disabled:opacity-50"
                   >
-                    <RefreshCw className={`h-3 w-3 ${productsLoading ? 'animate-spin' : ''}`} />
-                    Refresh Stock
+                    <RefreshCw className={`h-2.5 w-2.5 md:h-3 md:w-3 ${productsLoading ? 'animate-spin' : ''}`} />
+                    <span className="hidden sm:inline">Refresh</span>
                   </button>
                 )}
-                <button
-                  onClick={handleForceCacheRefresh}
-                  className="flex items-center gap-1.5 border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/50 px-2.5 py-1.5 rounded text-xs transition-colors"
-                  title="Clear cache and refresh"
-                >
-                  <Database className="h-3 w-3" />
-                  Clear Cache
-                </button>
               </div>
             </div>
             
-            <div className="relative mb-3">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 theme-text-muted" />
+            <div className="relative mb-2">
+              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3 w-3 md:h-3.5 md:w-3.5 theme-text-muted" />
               <input
                 type="text"
-                placeholder="Search products by name, brand, or category..."
+                placeholder="Search products..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-3 py-2.5 border theme-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text placeholder-theme-text-muted"
+                className="w-full pl-7 pr-2 py-1.5 md:pl-9 md:pr-3 md:py-2.5 border theme-border rounded-lg text-xs md:text-sm focus:outline-none focus:ring-1 md:focus:ring-2 focus:ring-blue-500 theme-surface theme-text placeholder-theme-text-muted"
               />
             </div>
 
-            {/* Products List */}
-            <div className="max-h-[28rem] overflow-y-auto">
+            {/* Products List - Compact */}
+            <div className="max-h-[60vh] md:max-h-[28rem] overflow-y-auto">
               {productsLoading ? (
-                <div className="text-center py-6">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                  <p className="theme-text-muted text-xs mt-2">Loading products...</p>
+                <div className="text-center py-4 md:py-6">
+                  <div className="animate-spin rounded-full h-6 w-6 md:h-8 md:w-8 border-b-2 border-blue-600 mx-auto"></div>
+                  <p className="theme-text-muted text-[10px] md:text-xs mt-1">Loading...</p>
                 </div>
               ) : filteredProducts.length === 0 ? (
-                <div className="text-center py-6">
-                  <ShoppingCart className="h-10 w-10 mx-auto mb-2 theme-text-muted opacity-60" />
-                  <p className="theme-text-muted text-sm">No products found</p>
-                  {searchTerm && (
-                    <p className="theme-text-muted text-xs mt-1">
-                      Try a different search term
-                    </p>
-                  )}
+                <div className="text-center py-4 md:py-6">
+                  <ShoppingCart className="h-8 w-8 md:h-10 md:w-10 mx-auto mb-1 md:mb-2 theme-text-muted opacity-60" />
+                  <p className="theme-text-muted text-xs md:text-sm">No products found</p>
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1 md:space-y-2">
                   {filteredProducts.map((product) => {
                     const selectedItem = selectedProducts.find(item => item.productId === product._id);
                     const usedQuantity = selectedItem?.quantity || 0;
@@ -1528,7 +1430,7 @@ const CreateSaleTab = ({
                     return (
                       <div
                         key={product._id}
-                        className={`flex items-center justify-between p-3 border rounded-lg transition-all duration-200 ${
+                        className={`flex items-center justify-between p-2 border rounded-lg transition-all duration-200 ${
                           isRecentlyUpdated 
                             ? 'border-blue-500 bg-blue-50 shadow-sm dark:border-blue-400 dark:bg-blue-900/20' 
                             : isMarked
@@ -1536,62 +1438,41 @@ const CreateSaleTab = ({
                             : 'theme-border hover:border-gray-300 dark:hover:border-gray-600'
                         } ${availableStock === 0 ? 'opacity-70' : 'hover:shadow-sm'}`}
                       >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-medium theme-text text-sm truncate">
+                        <div className="flex-1 min-w-0 pr-1">
+                          <div className="flex items-center gap-1">
+                            <h4 className="font-medium theme-text text-xs truncate">
                               {product.name}
                             </h4>
                             {product.isLocal && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-                                <CloudOff className="h-2.5 w-2.5 mr-1" />
-                                Local
-                              </span>
-                            )}
-                            {isRecentlyUpdated && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 animate-pulse">
-                                <ArrowUpDown className="h-2.5 w-2.5 mr-1" />
-                                Updated
-                              </span>
-                            )}
-                            {isMarked && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                                <Check className="h-2.5 w-2.5 mr-1" />
-                                Selected
+                              <span className="inline-flex items-center px-1 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                                <CloudOff className="h-2 w-2 mr-0.5" />
                               </span>
                             )}
                           </div>
-                          <p className="theme-text-muted text-xs truncate mt-0.5">{product.brand}</p>
-                          <div className="flex items-center gap-2 mt-2">
-                            <span className="font-semibold text-blue-600 dark:text-blue-400 text-sm">
+                          <div className="flex items-center justify-between mt-1">
+                            <span className="font-semibold text-blue-600 dark:text-blue-400 text-xs">
                               UGX {product.sellingPrice?.toLocaleString()}
                             </span>
-                            <div className="flex items-center gap-1.5">
-                              <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                                isOutOfStock
-                                  ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                                  : isLowStock
-                                  ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
-                                  : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                              }`}>
-                                {isOutOfStock ? 'Out of stock' : `Stock: ${product.stock}`}
-                              </span>
-                              {usedQuantity > 0 && (
-                                <span className="text-xs px-2 py-1 rounded-full font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                                  In cart: {usedQuantity}
-                                </span>
-                              )}
-                            </div>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                              isOutOfStock
+                                ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                                : isLowStock
+                                ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                                : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                            }`}>
+                              {product.stock}
+                            </span>
                           </div>
-                          {availableStock < product.stock && (
-                            <p className="text-xs text-blue-600 dark:text-blue-400 mt-1 font-medium">
-                              Available for sale: {availableStock}
+                          {availableStock < product.stock && usedQuantity > 0 && (
+                            <p className="text-[10px] text-blue-600 dark:text-blue-400 mt-0.5">
+                              Available: {availableStock}
                             </p>
                           )}
                         </div>
                         <button
                           onClick={() => mobileView && workflowStep === 'select' ? toggleProductMark(product) : addProductToSale(product)}
                           disabled={availableStock === 0}
-                          className={`ml-3 p-2 rounded-lg transition-all duration-200 ${
+                          className={`ml-1 p-1.5 rounded-lg transition-all duration-200 ${
                             availableStock === 0 
                               ? 'bg-gray-300 text-gray-500 cursor-not-allowed dark:bg-gray-700 dark:text-gray-400' 
                               : isMarked
@@ -1600,7 +1481,7 @@ const CreateSaleTab = ({
                           }`}
                           title={availableStock === 0 ? 'Out of stock' : isMarked ? 'Remove from selection' : 'Add to sale'}
                         >
-                          {isMarked ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                          {isMarked ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
                         </button>
                       </div>
                     );
@@ -1608,68 +1489,44 @@ const CreateSaleTab = ({
                 </div>
               )}
             </div>
-            
-            {/* Mobile Done Button for Product Selection */}
-            {mobileView && workflowStep === 'select' && markedProducts.size > 0 && (
-              <div className="mt-4 pt-4 border-t theme-border md:hidden">
-                <button
-                  onClick={addMarkedProductsToSale}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                >
-                  <Check className="h-5 w-5" />
-                  Add {markedProducts.size} Selected Item{markedProducts.size !== 1 ? 's' : ''} to Sale
-                </button>
-              </div>
-            )}
           </div>
 
-          {/* Customer Information */}
-          <div className="theme-surface rounded-lg shadow-sm border theme-border p-4">
-            <h3 className="text-sm font-semibold theme-text mb-3 flex items-center gap-2">
-              <User className="h-4 w-4" />
-              Customer Information (Optional)
+          {/* Customer Information - Compact */}
+          <div className="theme-surface rounded-lg shadow-sm border theme-border p-2 md:p-4">
+            <h3 className="text-xs md:text-sm font-semibold theme-text mb-2 flex items-center gap-1 md:gap-2">
+              <User className="h-3 w-3 md:h-4 md:w-4" />
+              Customer
             </h3>
             
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div>
-                <label className="block text-xs font-medium theme-text mb-1.5">
-                  Customer Name
-                </label>
                 <input
                   type="text"
                   value={customer.name}
                   onChange={(e) => setCustomer(prev => ({ ...prev, name: e.target.value }))}
-                  className="w-full px-3 py-2.5 border theme-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text placeholder-theme-text-muted"
-                  placeholder="Walk-in Customer"
+                  className="w-full px-2 py-1.5 md:px-3 md:py-2.5 border theme-border rounded-lg text-xs md:text-sm focus:outline-none focus:ring-1 md:focus:ring-2 focus:ring-blue-500 theme-surface theme-text placeholder-theme-text-muted"
+                  placeholder="Customer name"
                 />
               </div>
               
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-xs font-medium theme-text mb-1.5 flex items-center gap-1.5">
-                    <Phone className="h-3.5 w-3.5" />
-                    Phone Number
-                  </label>
                   <input
                     type="tel"
                     value={customer.phone}
                     onChange={(e) => setCustomer(prev => ({ ...prev, phone: e.target.value }))}
-                    className="w-full px-3 py-2.5 border theme-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text placeholder-theme-text-muted"
-                    placeholder="+256 XXX XXX XXX"
+                    className="w-full px-2 py-1.5 border theme-border rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 theme-surface theme-text placeholder-theme-text-muted"
+                    placeholder="Phone"
                   />
                 </div>
                 
                 <div>
-                  <label className="block text-xs font-medium theme-text mb-1.5 flex items-center gap-1.5">
-                    <Mail className="h-3.5 w-3.5" />
-                    Email Address
-                  </label>
                   <input
                     type="email"
                     value={customer.email}
                     onChange={(e) => setCustomer(prev => ({ ...prev, email: e.target.value }))}
-                    className="w-full px-3 py-2.5 border theme-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text placeholder-theme-text-muted"
-                    placeholder="customer@example.com"
+                    className="w-full px-2 py-1.5 border theme-border rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 theme-surface theme-text placeholder-theme-text-muted"
+                    placeholder="Email"
                   />
                 </div>
               </div>
@@ -1679,51 +1536,47 @@ const CreateSaleTab = ({
 
         {/* COLUMN 2: Sale Items */}
         <div 
-          ref={saleItemsRef}
-          className={`space-y-4 ${mobileView && workflowStep !== 'review' ? 'hidden md:block' : ''}`}
+          className={`space-y-2 md:space-y-4 ${mobileView && workflowStep !== 'review' ? 'hidden md:block' : ''}`}
         >
-          <div className="theme-surface rounded-lg shadow-sm border theme-border p-4 h-fit">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold theme-text flex items-center gap-2">
-                <ShoppingCart className="h-4 w-4" />
+          <div className="theme-surface rounded-lg shadow-sm border theme-border p-2 md:p-4 h-fit">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs md:text-sm font-semibold theme-text flex items-center gap-1 md:gap-2">
+                <ShoppingCart className="h-3 w-3 md:h-4 md:w-4" />
                 Sale Items
-                <span className="text-xs font-normal theme-text-muted">
-                  ({selectedProducts.length} items)
+                <span className="text-[10px] md:text-xs font-normal theme-text-muted">
+                  ({selectedProducts.length})
                 </span>
               </h3>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 md:gap-2">
                 {selectedProducts.length > 0 && (
                   <button
                     onClick={resetForm}
-                    className="text-xs text-red-600 hover:text-red-800 flex items-center gap-1.5 transition-colors dark:text-red-400 dark:hover:text-red-300"
+                    className="text-xs text-red-600 hover:text-red-800 flex items-center gap-1 transition-colors dark:text-red-400 dark:hover:text-red-300"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Clear All
+                    <Trash2 className="h-3 w-3" />
+                    <span className="hidden sm:inline">Clear</span>
                   </button>
                 )}
-                {mobileView && workflowStep === 'review' && (
+                {mobileView && workflowStep === 'review' && selectedProducts.length === 0 && (
                   <button
                     onClick={goToSelectProducts}
-                    className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1.5 transition-colors"
+                    className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
                   >
-                    <Plus className="h-3.5 w-3.5" />
-                    Add More
+                    <Plus className="h-3 w-3" />
+                    Add
                   </button>
                 )}
               </div>
             </div>
             
             {selectedProducts.length === 0 ? (
-              <div className="text-center py-6">
-                <ShoppingCart className="h-10 w-10 mx-auto mb-2 theme-text-muted opacity-60" />
-                <p className="theme-text-muted text-sm">No products selected</p>
-                <p className="theme-text-muted text-xs mt-1">
-                  Add products from the left panel
-                </p>
+              <div className="text-center py-4 md:py-6">
+                <ShoppingCart className="h-8 w-8 md:h-10 md:w-10 mx-auto mb-1 md:mb-2 theme-text-muted opacity-60" />
+                <p className="theme-text-muted text-xs md:text-sm">No items</p>
                 {mobileView && (
                   <button
                     onClick={goToSelectProducts}
-                    className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg text-sm transition-colors"
+                    className="mt-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs transition-colors"
                   >
                     Select Products
                   </button>
@@ -1731,90 +1584,86 @@ const CreateSaleTab = ({
               </div>
             ) : (
               <>
-                <div className="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-[60vh] md:max-h-[28rem] overflow-y-auto pr-1">
                   {selectedProducts.map((item) => {
                     const product = products.find(p => p._id === item.productId);
                     const stockAfterSale = product ? product.stock - item.quantity : item.stock;
                     const hasDiscount = activeDiscounts[item.productId] > 0;
                     
                     return (
-                      <div key={item.productId} className="p-3 border theme-border rounded-lg theme-secondary">
+                      <div key={item.productId} className="p-2 border theme-border rounded-lg theme-secondary">
                         {/* Product Header */}
-                        <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center justify-between mb-2">
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-medium theme-text text-sm truncate">
+                            <div className="flex items-center gap-1">
+                              <h4 className="font-medium theme-text text-xs truncate">
                                 {item.name}
                               </h4>
-                              {item.isLocal && (
-                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-                                  <Shield className="h-2.5 w-2.5 mr-1" />
-                                  Local
-                                </span>
-                              )}
                             </div>
-                            <p className="theme-text-muted text-xs truncate mt-0.5">
-                              {item.brand} • {item.category}
-                            </p>
+                            <div className="flex items-center justify-between mt-1">
+                              <span className="text-[10px] theme-text-muted">
+                                UGX {item.unitPrice?.toLocaleString()}
+                              </span>
+                              <button
+                                onClick={() => removeProductFromSale(item.productId)}
+                                className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors dark:text-red-400 dark:hover:bg-red-900/30"
+                                title="Remove"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </div>
                           </div>
-                          <button
-                            onClick={() => removeProductFromSale(item.productId)}
-                            className="ml-3 p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors dark:text-red-400 dark:hover:bg-red-900/30"
-                            title="Remove from sale"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
                         </div>
 
                         {/* Stock Warning */}
                         {product && stockAfterSale <= (product.lowStockAlert || 5) && stockAfterSale > 0 && (
-                          <div className="mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700 dark:bg-yellow-900/30 dark:border-yellow-800 dark:text-yellow-300">
-                            ⚠️ After sale: {stockAfterSale} units left (low stock)
+                          <div className="mb-2 p-1 bg-yellow-50 border border-yellow-200 rounded text-[10px] text-yellow-700 dark:bg-yellow-900/30 dark:border-yellow-800 dark:text-yellow-300">
+                            ⚠️ Low after sale: {stockAfterSale}
                           </div>
                         )}
 
                         {/* Price Selection */}
-                        <div className="space-y-2.5 mb-3">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="theme-text-muted">Cost Price:</span>
+                        <div className="space-y-1.5 mb-2">
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="theme-text-muted">Cost:</span>
                             <span className="font-medium theme-text">
                               UGX {item.unitCost?.toLocaleString()}
                             </span>
                           </div>
                           
-                          <div className="flex items-center gap-2">
-                            <label className="flex items-center gap-1.5 text-xs">
+                          <div className="flex items-center gap-1">
+                            <label className="flex items-center gap-1 text-[10px]">
                               <input
                                 type="radio"
                                 checked={!item.useCustomPrice}
                                 onChange={() => togglePriceType(item.productId, false)}
-                                className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 dark:text-blue-400 dark:focus:ring-blue-400"
+                                className="h-2.5 w-2.5 text-blue-600 focus:ring-blue-500 dark:text-blue-400 dark:focus:ring-blue-400"
                               />
-                              <span className="theme-text">Original Price:</span>
+                              <span className="theme-text">Original:</span>
                             </label>
-                            <span className="font-semibold text-blue-600 dark:text-blue-400 text-sm">
+                            <span className="font-semibold text-blue-600 dark:text-blue-400 text-xs">
                               UGX {item.originalPrice?.toLocaleString()}
                             </span>
                           </div>
 
-                          <div className="flex items-center gap-2">
-                            <label className="flex items-center gap-1.5 text-xs">
+                          <div className="flex items-center gap-1">
+                            <label className="flex items-center gap-1 text-[10px]">
                               <input
                                 type="radio"
                                 checked={item.useCustomPrice}
                                 onChange={() => togglePriceType(item.productId, true)}
-                                className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 dark:text-blue-400 dark:focus:ring-blue-400"
+                                className="h-2.5 w-2.5 text-blue-600 focus:ring-blue-500 dark:text-blue-400 dark:focus:ring-blue-400"
                               />
-                              <span className="theme-text">Custom Price:</span>
+                              <span className="theme-text">Custom:</span>
                             </label>
                             
                             {editingPrice === item.productId ? (
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1">
                                 <input
                                   type="number"
                                   value={customPrice}
                                   onChange={(e) => setCustomPrice(e.target.value)}
-                                  className="w-24 px-2 py-1.5 border theme-border rounded text-sm theme-surface theme-text"
+                                  className="w-16 px-1 py-1 border theme-border rounded text-xs theme-surface theme-text"
                                   placeholder="Price"
                                   min="0"
                                   step="100"
@@ -1822,112 +1671,89 @@ const CreateSaleTab = ({
                                 />
                                 <button
                                   onClick={() => saveCustomPrice(item.productId)}
-                                  className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors dark:text-green-400 dark:hover:bg-green-900/30"
-                                  title="Save price"
+                                  className="p-1 text-green-600 hover:bg-green-50 rounded-lg transition-colors dark:text-green-400 dark:hover:bg-green-900/30"
+                                  title="Save"
                                 >
-                                  <Save className="h-4 w-4" />
+                                  <Save className="h-3 w-3" />
                                 </button>
                                 <button
                                   onClick={cancelEditingPrice}
-                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors dark:text-red-400 dark:hover:bg-red-900/30"
+                                  className="p-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors dark:text-red-400 dark:hover:bg-red-900/30"
                                   title="Cancel"
                                 >
-                                  <X className="h-4 w-4" />
+                                  <X className="h-3 w-3" />
                                 </button>
                               </div>
                             ) : (
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold text-blue-600 dark:text-blue-400 text-sm">
+                              <div className="flex items-center gap-1">
+                                <span className="font-semibold text-blue-600 dark:text-blue-400 text-xs">
                                   UGX {item.customPrice?.toLocaleString()}
                                 </span>
                                 <button
                                   onClick={() => startEditingPrice(item.productId, item.customPrice)}
-                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors dark:text-blue-400 dark:hover:bg-blue-900/30"
-                                  title="Edit price"
+                                  className="p-1 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors dark:text-blue-400 dark:hover:bg-blue-900/30"
+                                  title="Edit"
                                 >
-                                  <Edit3 className="h-4 w-4" />
+                                  <Edit3 className="h-3 w-3" />
                                 </button>
                               </div>
                             )}
                           </div>
 
                           {/* Quick Discount Buttons */}
-                          <div className="flex items-center gap-1.5 pt-1">
-                            <span className="text-xs theme-text-muted mr-1">Quick Discount:</span>
-                            {[5, 10, 15, 20].map(percent => (
-                              <button
-                                key={percent}
-                                onClick={() => handleQuickDiscount(item.productId, percent)}
-                                className={`px-2 py-1 rounded text-xs transition-colors ${
-                                  activeDiscounts[item.productId] === percent
-                                    ? 'bg-blue-600 text-white dark:bg-blue-500'
-                                    : 'theme-secondary theme-text hover:theme-secondary'
-                                }`}
-                              >
-                                {percent}%
-                              </button>
-                            ))}
-                            {hasDiscount && (
+                          {hasDiscount && (
+                            <div className="flex items-center gap-1 pt-0.5">
+                              <span className="text-[10px] theme-text-muted mr-0.5">Discount:</span>
+                              {[5, 10, 15].map(percent => (
+                                <button
+                                  key={percent}
+                                  onClick={() => handleQuickDiscount(item.productId, percent)}
+                                  className={`px-1.5 py-0.5 rounded text-[10px] transition-colors ${
+                                    activeDiscounts[item.productId] === percent
+                                      ? 'bg-blue-600 text-white dark:bg-blue-500'
+                                      : 'theme-secondary theme-text hover:theme-secondary'
+                                  }`}
+                                >
+                                  {percent}%
+                                </button>
+                              ))}
                               <button
                                 onClick={() => clearDiscount(item.productId)}
-                                className="px-2 py-1 rounded text-xs bg-red-100 text-red-700 hover:bg-red-200 transition-colors dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800"
+                                className="px-1.5 py-0.5 rounded text-[10px] bg-red-100 text-red-700 hover:bg-red-200 transition-colors dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800"
                               >
                                 Clear
                               </button>
-                            )}
-                          </div>
-
-                          {/* Current Selling Price */}
-                          <div className="flex items-center justify-between pt-2 border-t theme-border">
-                            <span className="font-medium theme-text text-sm">Selling Price:</span>
-                            <span className={`font-bold text-sm ${
-                              item.useCustomPrice && item.customPrice !== item.originalPrice
-                                ? 'text-orange-600 dark:text-orange-400'
-                                : 'text-blue-600 dark:text-blue-400'
-                            }`}>
-                              UGX {item.unitPrice?.toLocaleString()}
-                              {item.useCustomPrice && item.customPrice !== item.originalPrice && (
-                                <span className="ml-1.5 text-xs font-normal">
-                                  ({item.discountPercent > 0 ? `-${item.discountPercent}%` : 'Custom'})
-                                </span>
-                              )}
-                            </span>
-                          </div>
+                            </div>
+                          )}
                         </div>
 
                         {/* Quantity Controls */}
-                        <div className="flex items-center justify-between pt-3 border-t theme-border">
-                          <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-between pt-2 border-t theme-border">
+                          <div className="flex items-center gap-1">
                             <button
                               onClick={() => updateProductQuantity(item.productId, item.quantity - 1)}
-                              className="p-1.5 border theme-border rounded-lg hover:theme-secondary transition-colors"
-                              title="Decrease quantity"
+                              className="p-1 border theme-border rounded-lg hover:theme-secondary transition-colors"
+                              title="Decrease"
                             >
-                              <Minus className="h-3.5 w-3.5" />
+                              <Minus className="h-2.5 w-2.5" />
                             </button>
-                            <span className="w-10 text-center text-sm font-bold theme-text theme-surface py-1.5 rounded-lg border theme-border">
+                            <span className="w-8 text-center text-xs font-bold theme-text theme-surface py-1 rounded border theme-border">
                               {item.quantity}
                             </span>
                             <button
                               onClick={() => updateProductQuantity(item.productId, item.quantity + 1)}
                               disabled={item.quantity >= item.maxQuantity}
-                              className="p-1.5 border theme-border rounded-lg hover:theme-secondary disabled:opacity-50 transition-colors"
-                              title="Increase quantity"
+                              className="p-1 border theme-border rounded-lg hover:theme-secondary disabled:opacity-50 transition-colors"
+                              title="Increase"
                             >
-                              <Plus className="h-3.5 w-3.5" />
+                              <Plus className="h-2.5 w-2.5" />
                             </button>
-                            <span className="ml-2 text-xs theme-text-muted">
-                              of {item.maxQuantity}
-                            </span>
                           </div>
                           
                           <div className="text-right">
-                            <span className="font-bold text-blue-600 dark:text-blue-400 text-sm">
+                            <span className="font-bold text-blue-600 dark:text-blue-400 text-xs">
                               UGX {(item.unitPrice * item.quantity).toLocaleString()}
                             </span>
-                            <div className="text-xs theme-text-muted mt-0.5">
-                              Profit: UGX {((item.unitPrice - item.unitCost) * item.quantity).toLocaleString()}
-                            </div>
                           </div>
                         </div>
                       </div>
@@ -1935,16 +1761,15 @@ const CreateSaleTab = ({
                   })}
                 </div>
                 
-                {/* Mobile Done Button for Review */}
-                {mobileView && workflowStep === 'review' && (
-                  <div className="mt-4 pt-4 border-t theme-border">
-                    <button
-                      onClick={goToSaleDetails}
-                      className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                    >
-                      <ChevronRight className="h-5 w-5" />
-                      Proceed to Sale Details
-                    </button>
+                {/* Mobile Review Info */}
+                {mobileView && workflowStep === 'review' && selectedProducts.length > 0 && (
+                  <div className="mt-2 pt-2 border-t theme-border flex items-center justify-between text-xs">
+                    <span className="theme-text">
+                      Total: <span className="font-bold">UGX {totals.totalAmount.toLocaleString()}</span>
+                    </span>
+                    <span className="theme-text-muted">
+                      {selectedProducts.reduce((sum, item) => sum + item.quantity, 0)} units
+                    </span>
                   </div>
                 )}
               </>
@@ -1954,78 +1779,72 @@ const CreateSaleTab = ({
 
         {/* COLUMN 3: Sale Details & Summary */}
         <div 
-          ref={saleDetailsRef}
-          className={`space-y-4 ${mobileView && workflowStep !== 'details' ? 'hidden md:block' : ''}`}
+          className={`space-y-2 md:space-y-4 ${mobileView && workflowStep !== 'details' ? 'hidden md:block' : ''}`}
         >
-          {/* Sale Details */}
-          <div className="theme-surface rounded-lg shadow-sm border theme-border p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold theme-text mb-3 flex items-center gap-2">
-                <Calculator className="h-4 w-4" />
-                Sale Details
+          {/* Sale Details - Compact */}
+          <div className="theme-surface rounded-lg shadow-sm border theme-border p-2 md:p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs md:text-sm font-semibold theme-text flex items-center gap-1 md:gap-2">
+                <Calculator className="h-3 w-3 md:h-4 md:w-4" />
+                Details
               </h3>
               {mobileView && workflowStep === 'details' && (
                 <button
                   onClick={goToReviewItems}
-                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1.5 transition-colors"
+                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
                 >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                  Back to Items
+                  <ChevronLeft className="h-3 w-3" />
+                  Back
                 </button>
               )}
             </div>
             
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div>
-                <label className="block text-xs font-medium theme-text mb-2">
-                  Payment Method
+                <label className="block text-xs font-medium theme-text mb-1">
+                  Payment
                 </label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-1">
                   {[
-                    { value: 'cash', label: 'Cash', icon: <Receipt className="h-4 w-4" /> },
-                    { value: 'card', label: 'Card', icon: <CreditCard className="h-4 w-4" /> },
-                    { value: 'mobile_money', label: 'M-Pesa', icon: <Smartphone className="h-4 w-4" /> },
-                    { value: 'bank_transfer', label: 'Bank', icon: <Building className="h-4 w-4" /> }
+                    { value: 'cash', label: 'Cash', icon: <Receipt className="h-3 w-3" /> },
+                    { value: 'card', label: 'Card', icon: <CreditCard className="h-3 w-3" /> },
+                    { value: 'mobile_money', label: 'M-Pesa', icon: <Smartphone className="h-3 w-3" /> },
+                    { value: 'bank_transfer', label: 'Bank', icon: <Building className="h-3 w-3" /> }
                   ].map((method) => (
                     <button
                       key={method.value}
                       onClick={() => setSaleDetails(prev => ({ ...prev, paymentMethod: method.value }))}
-                      className={`flex items-center gap-2 p-3 border rounded-lg text-xs font-medium transition-all duration-200 ${
+                      className={`flex items-center gap-1 p-1.5 border rounded text-[10px] font-medium transition-all duration-200 ${
                         saleDetails.paymentMethod === method.value
                           ? 'bg-blue-600 text-white border-blue-600 shadow-sm dark:bg-blue-500 dark:border-blue-500'
                           : 'theme-border theme-text hover:theme-secondary'
                       }`}
-                      title={`Pay with ${method.label}`}
+                      title={method.label}
                     >
                       {method.icon}
-                      {method.label}
+                      <span className="hidden sm:inline">{method.label}</span>
                     </button>
                   ))}
                 </div>
               </div>
               
               <div>
-                <label className="block text-xs font-medium theme-text mb-2">
+                <label className="block text-xs font-medium theme-text mb-1">
                   Total Amount
                 </label>
-                <div className="p-3 theme-secondary rounded-lg border theme-border text-center">
-                  <span className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                <div className="p-2 theme-secondary rounded-lg border theme-border text-center">
+                  <span className="text-sm md:text-lg font-bold text-blue-600 dark:text-blue-400">
                     UGX {totals.totalAmount.toLocaleString()}
                   </span>
-                  {totals.totalDiscount > 0 && (
-                    <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-                      You saved UGX {totals.totalDiscount.toLocaleString()}
-                    </p>
-                  )}
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium theme-text mb-2">
+                <label className="block text-xs font-medium theme-text mb-1">
                   Amount Paid
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-sm theme-text-muted">UGX</span>
+                  <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-xs theme-text-muted">UGX</span>
                   <input
                     type="number"
                     min="0"
@@ -2033,25 +1852,25 @@ const CreateSaleTab = ({
                     max={totals.totalAmount * 2}
                     value={saleDetails.amountPaid}
                     onChange={(e) => setSaleDetails(prev => ({ ...prev, amountPaid: parseFloat(e.target.value) || 0 }))}
-                    className="w-full pl-12 pr-3 py-2.5 border theme-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text"
+                    className="w-full pl-8 pr-2 py-1.5 border theme-border rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 theme-surface theme-text"
                   />
                 </div>
-                <div className="flex gap-2 mt-2">
+                <div className="flex gap-1 mt-1">
                   <button
                     onClick={() => setSaleDetails(prev => ({ ...prev, amountPaid: totals.totalAmount }))}
-                    className="flex-1 text-xs border theme-border rounded px-2 py-1.5 theme-text hover:theme-secondary transition-colors"
+                    className="flex-1 text-[10px] border theme-border rounded px-1 py-1 theme-text hover:theme-secondary transition-colors"
                   >
-                    Full Amount
+                    Full
                   </button>
                   <button
                     onClick={() => setSaleDetails(prev => ({ ...prev, amountPaid: totals.totalAmount / 2 }))}
-                    className="flex-1 text-xs border theme-border rounded px-2 py-1.5 theme-text hover:theme-secondary transition-colors"
+                    className="flex-1 text-[10px] border theme-border rounded px-1 py-1 theme-text hover:theme-secondary transition-colors"
                   >
                     Half
                   </button>
                   <button
                     onClick={() => setSaleDetails(prev => ({ ...prev, amountPaid: 0 }))}
-                    className="flex-1 text-xs border theme-border rounded px-2 py-1.5 theme-text hover:theme-secondary transition-colors"
+                    className="flex-1 text-[10px] border theme-border rounded px-1 py-1 theme-text hover:theme-secondary transition-colors"
                   >
                     Zero
                   </button>
@@ -2059,51 +1878,51 @@ const CreateSaleTab = ({
               </div>
               
               <div>
-                <label className="block text-xs font-medium theme-text mb-2">
-                  Sale Notes
+                <label className="block text-xs font-medium theme-text mb-1">
+                  Notes
                 </label>
                 <textarea
                   value={saleDetails.notes}
                   onChange={(e) => setSaleDetails(prev => ({ ...prev, notes: e.target.value }))}
-                  rows="3"
-                  className="w-full px-3 py-2.5 border theme-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text placeholder-theme-text-muted"
-                  placeholder="Sale notes, customer remarks, special instructions..."
+                  rows="2"
+                  className="w-full px-2 py-1.5 border theme-border rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 theme-surface theme-text placeholder-theme-text-muted"
+                  placeholder="Sale notes..."
                 />
               </div>
             </div>
           </div>
 
-          {/* Order Summary */}
-          <div className="theme-surface rounded-lg shadow-sm border theme-border p-4">
-            <h3 className="text-sm font-semibold theme-text mb-3 flex items-center gap-2">
-              <Receipt className="h-4 w-4" />
-              Order Summary
+          {/* Order Summary - Compact */}
+          <div className="theme-surface rounded-lg shadow-sm border theme-border p-2 md:p-4">
+            <h3 className="text-xs md:text-sm font-semibold theme-text mb-2 flex items-center gap-1 md:gap-2">
+              <Receipt className="h-3 w-3 md:h-4 md:w-4" />
+              Summary
             </h3>
             
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between items-center py-1.5">
+            <div className="space-y-1 text-xs">
+              <div className="flex justify-between items-center py-0.5">
                 <span className="theme-text-muted">Subtotal:</span>
                 <span className="font-medium theme-text">UGX {totals.subtotal.toLocaleString()}</span>
               </div>
               
               {totals.totalDiscount > 0 && (
-                <div className="flex justify-between items-center py-1.5 border-t theme-border pt-2">
+                <div className="flex justify-between items-center py-0.5">
                   <span className="theme-text-muted">Discount:</span>
                   <span className="font-medium text-green-600 dark:text-green-400">-UGX {totals.totalDiscount.toLocaleString()}</span>
                 </div>
               )}
               
-              <div className="flex justify-between items-center py-1.5 border-t theme-border pt-2">
+              <div className="flex justify-between items-center py-0.5 border-t theme-border pt-1">
                 <span className="theme-text font-medium">Total:</span>
-                <span className="font-bold text-blue-600 dark:text-blue-400 text-lg">UGX {totals.totalAmount.toLocaleString()}</span>
+                <span className="font-bold text-blue-600 dark:text-blue-400 text-sm md:text-lg">UGX {totals.totalAmount.toLocaleString()}</span>
               </div>
               
-              <div className="flex justify-between items-center py-1.5">
+              <div className="flex justify-between items-center py-0.5">
                 <span className="theme-text-muted">Paid:</span>
                 <span className="font-medium theme-text">UGX {saleDetails.amountPaid.toLocaleString()}</span>
               </div>
               
-              <div className="flex justify-between items-center py-1.5 border-t theme-border pt-2">
+              <div className="flex justify-between items-center py-0.5">
                 <span className="theme-text-muted">Balance:</span>
                 <span className={`font-bold ${
                   totals.balance === 0 ? 'text-green-600 dark:text-green-400' : 
@@ -2113,65 +1932,47 @@ const CreateSaleTab = ({
                 </span>
               </div>
               
-              <div className="flex justify-between items-center py-1.5">
-                <span className="theme-text-muted">Total Cost:</span>
-                <span className="font-medium theme-text">UGX {totals.totalCost.toLocaleString()}</span>
-              </div>
-              
-              <div className="flex justify-between items-center py-1.5 border-t theme-border pt-2">
-                <span className="theme-text font-bold">Total Profit:</span>
-                <span className="font-bold text-green-600 dark:text-green-400 text-lg">UGX {totals.totalProfit.toLocaleString()}</span>
-              </div>
-
-              {/* Items Summary */}
-              <div className="mt-3 pt-3 border-t theme-border">
-                <div className="flex justify-between text-xs theme-text-muted mb-1">
-                  <span>Items:</span>
-                  <span>{selectedProducts.reduce((sum, item) => sum + item.quantity, 0)} units</span>
-                </div>
-                <div className="flex justify-between text-xs theme-text-muted">
-                  <span>Products:</span>
-                  <span>{selectedProducts.length} items</span>
-                </div>
+              <div className="flex justify-between items-center py-0.5 border-t theme-border pt-1">
+                <span className="theme-text font-medium">Profit:</span>
+                <span className="font-bold text-green-600 dark:text-green-400">UGX {totals.totalProfit.toLocaleString()}</span>
               </div>
             </div>
             
-            <div className="mt-4 flex gap-3">
+            <div className="mt-3 flex gap-2">
               <button
                 onClick={resetForm}
                 disabled={creatingSale}
-                className="flex-1 border theme-border theme-text hover:theme-secondary py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                className="flex-1 border theme-border theme-text hover:theme-secondary py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
               >
-                Clear All
+                Clear
               </button>
               
               <button
                 onClick={handleCreateSale}
                 disabled={creatingSale || selectedProducts.length === 0}
-                className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed shadow-sm hover:shadow dark:bg-green-700 dark:hover:bg-green-600 dark:disabled:bg-gray-700"
+                className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1 disabled:cursor-not-allowed shadow-sm hover:shadow dark:bg-green-700 dark:hover:bg-green-600 dark:disabled:bg-gray-700"
               >
                 {creatingSale ? (
                   <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    {isOnline ? 'Processing...' : 'Saving locally...'}
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                    <span className="hidden sm:inline">{isOnline ? 'Processing...' : 'Saving...'}</span>
                   </>
                 ) : (
                   <>
-                    <Receipt className="h-4 w-4" />
-                    {isOnline ? 'Create Sale' : 'Save Locally'}
+                    <Receipt className="h-3 w-3" />
+                    <span>{isOnline ? 'Create Sale' : 'Save Locally'}</span>
                   </>
                 )}
               </button>
             </div>
             
-            <div className="mt-3 pt-3 border-t theme-border">
-              <p className="text-xs theme-text-muted text-center">
+            <div className="mt-2 pt-2 border-t theme-border">
+              <p className="text-[10px] theme-text-muted text-center">
                 {selectedProducts.length} item{selectedProducts.length !== 1 ? 's' : ''} • 
-                {selectedProducts.reduce((sum, item) => sum + item.quantity, 0)} units • 
-                UGX {totals.totalAmount.toLocaleString()}
+                {selectedProducts.reduce((sum, item) => sum + item.quantity, 0)} units
               </p>
               {user && (
-                <p className="text-xs theme-text-muted text-center mt-1">
+                <p className="text-[10px] theme-text-muted text-center mt-0.5">
                   Cashier: {user.name || 'Admin'}
                 </p>
               )}
@@ -2180,8 +1981,41 @@ const CreateSaleTab = ({
         </div>
       </div>
 
-      {/* Mobile Action Buttons */}
-      {mobileView && <MobileActionButtons />}
+      {/* Floating Add Button - Appears only when items are selected */}
+      {mobileView && workflowStep === 'select' && markedProducts.size > 0 && (
+        <button
+          onClick={addMarkedProductsToSale}
+          className="fixed bottom-4 right-4 bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-full shadow-lg z-30 transition-all duration-200"
+          title={`Add ${markedProducts.size} item${markedProducts.size !== 1 ? 's' : ''}`}
+        >
+          <div className="relative">
+            <Check className="h-4 w-4" />
+            {markedProducts.size > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] rounded-full h-4 w-4 flex items-center justify-center">
+                {markedProducts.size}
+              </span>
+            )}
+          </div>
+        </button>
+      )}
+
+      {/* Floating Review Button - Appears only when in review step with items */}
+      {mobileView && workflowStep === 'review' && selectedProducts.length > 0 && (
+        <button
+          onClick={goToSaleDetails}
+          className="fixed bottom-4 right-4 bg-green-600 hover:bg-green-700 text-white p-2 rounded-full shadow-lg z-30 transition-all duration-200"
+          title="Proceed to details"
+        >
+          <div className="relative">
+            <ChevronRight className="h-4 w-4" />
+            {selectedProducts.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[10px] rounded-full h-4 w-4 flex items-center justify-center">
+                {selectedProducts.length}
+              </span>
+            )}
+          </div>
+        </button>
+      )}
     </div>
   );
 };

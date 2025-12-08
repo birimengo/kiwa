@@ -2,6 +2,7 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/auth');
 const {
+  getMyAnalytics,          // Add this import
   getSalesOverview,
   getProductAnalytics,
   getInventoryAnalytics,
@@ -15,10 +16,15 @@ const router = express.Router();
 router.use(protect);
 
 // ============================================
+// CONSOLIDATED ANALYTICS ENDPOINT (NEW)
+// ============================================
+router.get('/user/my-analytics', getMyAnalytics);
+router.get('/admin/my-analytics', authorize('admin'), getMyAnalytics);
+router.get('/my-analytics', authorize('admin'), getMyAnalytics);
+
+// ============================================
 // PERSONAL VIEW ROUTES (only user's own data)
 // ============================================
-
-// Regular users and admin personal view
 router.get('/user/sales-overview', getSalesOverview);
 router.get('/user/product-analytics', getProductAnalytics);
 router.get('/user/inventory', getInventoryAnalytics);
@@ -37,7 +43,6 @@ router.get('/admin/product-tracking', authorize('admin'), getProductTracking);
 // ============================================
 // ADMIN SYSTEM VIEW ROUTES (all data)
 // ============================================
-
 router.get('/sales/overview', authorize('admin'), getSalesOverview);
 router.get('/products', authorize('admin'), getProductAnalytics);
 router.get('/inventory', authorize('admin'), getInventoryAnalytics);

@@ -5,12 +5,13 @@ import {
   Printer, CreditCard, Smartphone, Building, Trash2, RotateCcw, 
   Cloud, CloudOff, CheckCircle, Upload, Download, Clock, Shield,
   BarChart3, History, Database, Wifi, WifiOff, ChevronDown, ChevronUp,
-  Info, ExternalLink, Lock, Unlock, AlertTriangle
+  Info, ExternalLink, Lock, Unlock, AlertTriangle, EyeOff, Globe
 } from 'lucide-react';
 import { salesAPI, productsAPI } from '../../services/api';
 import LocalStorageService from '../../services/localStorageService';
 
-const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
+// UPDATED: Added viewMode and isAdmin props
+const SalesTab = ({ user, onSalesUpdate, isOnline = true, viewMode = 'personal', isAdmin = false }) => {
   // Existing states
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -57,9 +58,24 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
   const isMountedRef = useRef(false);
   const prevFiltersRef = useRef(JSON.stringify(filters));
 
-  // Helper: Apply filters to local data
+  // Helper: Get view mode display text
+  const getViewModeText = () => {
+    if (!isAdmin) return '';
+    return viewMode === 'personal' ? ' (Your Sales)' : ' (All Sales)';
+  };
+
+  // Helper: Apply filters to local data - UPDATED to filter by creator in personal view
   const applyFiltersToLocal = useCallback((localSales) => {
     let filtered = localSales;
+    
+    // NEW: Filter by creator for admin personal view
+    if (isAdmin && viewMode === 'personal' && user && user._id) {
+      filtered = filtered.filter(sale => 
+        sale.soldBy?._id === user._id || 
+        sale.soldBy === user._id ||
+        (sale.isLocal && sale.soldBy === user._id)
+      );
+    }
     
     if (filters.saleType === 'online') {
       filtered = filtered.filter(sale => !sale.isLocal || sale.synced);
@@ -97,14 +113,25 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
     }
     
     return filtered;
-  }, [filters]);
+  }, [filters, isAdmin, viewMode, user]);
 
   // Helper: Update sync statistics
   const updateSyncStats = useCallback(() => {
     try {
       const localSales = LocalStorageService.getSales();
-      const offlineSales = localSales.filter(s => s.isLocal && !s.synced);
-      const failedSyncs = localSales.filter(s => s.lastSyncError);
+      
+      // Filter by creator for admin personal view
+      let filteredLocalSales = localSales;
+      if (isAdmin && viewMode === 'personal' && user && user._id) {
+        filteredLocalSales = localSales.filter(sale => 
+          sale.soldBy?._id === user._id || 
+          sale.soldBy === user._id ||
+          (sale.isLocal && sale.soldBy === user._id)
+        );
+      }
+      
+      const offlineSales = filteredLocalSales.filter(s => s.isLocal && !s.synced);
+      const failedSyncs = filteredLocalSales.filter(s => s.lastSyncError);
       
       setSyncStats({
         totalOffline: offlineSales.length,
@@ -115,9 +142,9 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
     } catch (error) {
       console.error('Error updating sync stats:', error);
     }
-  }, []);
+  }, [isAdmin, viewMode, user]);
 
-  // Enhanced fetchSales function - FETCH ALL SALES
+  // Enhanced fetchSales function - UPDATED FOR ADMIN FILTERING
   const fetchSales = useCallback(async (page = 1, forceRefresh = false) => {
     // Prevent multiple simultaneous fetches
     if (loading && !forceRefresh) return;
@@ -129,7 +156,7 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
     setError('');
     
     try {
-      console.log(`📊 Fetching sales, page ${page}, online: ${isOnline}`);
+      console.log(`📊 Fetching sales, page ${page}, online: ${isOnline}, viewMode: ${viewMode}, isAdmin: ${isAdmin}`);
       
       // Always load local sales first
       const localSales = LocalStorageService.getSales();
@@ -139,7 +166,7 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
       let totalCount = 0;
       let fetchedFromBackend = false;
       
-      // 1. Fetch from backend if online - FETCH ALL SALES WITHOUT PAGINATION FROM BACKEND
+      // 1. Fetch from backend if online - UPDATED FOR ADMIN FILTERING
       if (isOnline) {
         try {
           const params = {};
@@ -159,8 +186,16 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
           params.limit = 1000; // Adjust this based on your needs
           params.page = 1; // Always fetch first page for all results
           
-          console.log('🌐 Fetching ALL sales from backend...', params);
-          const response = await salesAPI.getSales(params);
+          let response;
+          
+          // NEW: Use admin-specific endpoint for personal view
+          if (isAdmin && viewMode === 'personal') {
+            console.log('🌐 Fetching admin personal sales from backend...', params);
+            response = await salesAPI.getAdminSales(params);
+          } else {
+            console.log('🌐 Fetching all sales from backend...', params);
+            response = await salesAPI.getSales(params);
+          }
           
           if (response.data && response.data.sales) {
             const backendSales = response.data.sales;
@@ -206,7 +241,7 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
       let filteredSales = applyFiltersToLocal(allSales);
       totalCount = filteredSales.length;
       
-      // 4. Sort: Offline sales first, then by date (newest first)
+      // 4. Sort: Offline unsynced sales first, then by date (newest first)
       filteredSales.sort((a, b) => {
         // Offline unsynced sales first
         if (a.isLocal && !a.synced && !(b.isLocal && !b.synced)) return -1;
@@ -263,7 +298,7 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
         setLoading(false);
       }
     }
-  }, [filters, pagination.limit, isOnline, loading, applyFiltersToLocal, updateSyncStats]);
+  }, [filters, pagination.limit, isOnline, loading, applyFiltersToLocal, updateSyncStats, viewMode, isAdmin]);
 
   // Initial fetch and filter effect
   useEffect(() => {
@@ -283,16 +318,27 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
     };
   }, [fetchSales]);
 
-  // Debug effect
+  // Listen for view mode changes
   useEffect(() => {
-    console.log('🔍 Sales Tab Debug:', {
-      totalSalesInState: sales.length,
-      pagination,
-      filters,
-      isOnline,
-      syncStats
-    });
-  }, [sales, pagination, filters, isOnline, syncStats]);
+    const handleViewModeChanged = (event) => {
+      if (event.detail && event.detail.viewMode) {
+        console.log('🔄 SalesTab: View mode changed to', event.detail.viewMode);
+        hasFetchedRef.current = false;
+        setSales([]);
+        setLoading(true);
+        
+        setTimeout(() => {
+          fetchSales(1, true);
+        }, 100);
+      }
+    };
+
+    window.addEventListener('viewModeChanged', handleViewModeChanged);
+    
+    return () => {
+      window.removeEventListener('viewModeChanged', handleViewModeChanged);
+    };
+  }, [fetchSales]);
 
   // Sync single offline sale
   const syncSingleSale = async (saleId) => {
@@ -396,8 +442,18 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
       return;
     }
 
-    const offlineSales = LocalStorageService.getSales()
-      .filter(s => s.isLocal && !s.synced);
+    const localSales = LocalStorageService.getSales();
+    
+    // Filter offline sales by creator for admin personal view
+    let offlineSales = localSales.filter(s => s.isLocal && !s.synced);
+    
+    if (isAdmin && viewMode === 'personal' && user && user._id) {
+      offlineSales = offlineSales.filter(sale => 
+        sale.soldBy?._id === user._id || 
+        sale.soldBy === user._id ||
+        sale.soldBy === user._id
+      );
+    }
     
     if (offlineSales.length === 0) {
       alert('✅ No offline sales to sync');
@@ -1058,6 +1114,39 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
 
   return (
     <div className="space-y-6">
+      {/* View Mode Indicator */}
+      {isAdmin && (
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {viewMode === 'personal' ? (
+                <EyeOff className="h-4 w-4 text-blue-600" />
+              ) : (
+                <Globe className="h-4 w-4 text-purple-600" />
+              )}
+              <div>
+                <p className="text-sm font-semibold text-blue-800">
+                  {viewMode === 'personal' ? 'Viewing Your Sales' : 'Viewing All Sales'}
+                </p>
+                <p className="text-xs text-blue-700">
+                  {viewMode === 'personal' 
+                    ? 'Only showing sales created by you'
+                    : 'Showing all sales in the system'
+                  }
+                </p>
+              </div>
+            </div>
+            <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+              viewMode === 'personal' 
+                ? 'bg-blue-100 text-blue-800' 
+                : 'bg-purple-100 text-purple-800'
+            }`}>
+              {viewMode === 'personal' ? 'Personal View' : 'System View'}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Sync Status Banner */}
       <div className="mb-4 space-y-2">
         {/* Network Status */}
@@ -1174,7 +1263,7 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
       <div className="theme-surface rounded-lg p-4">
         <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold theme-text">Sales History</h2>
+            <h2 className="text-lg font-semibold theme-text">Sales History{getViewModeText()}</h2>
             {!isOnline && (
               <span className="text-xs px-2 py-1 rounded bg-yellow-100 text-yellow-800">
                 Local Data
@@ -1296,7 +1385,7 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
       <div className="theme-surface rounded-lg p-4">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-md font-semibold theme-text">
-            Sales Records ({pagination.total})
+            Sales Records ({pagination.total}){getViewModeText()}
             {!isOnline && ' (Local Data)'}
           </h3>
           <div className="flex gap-2">
@@ -1347,7 +1436,12 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
             <Receipt className="h-12 w-12 mx-auto mb-3 theme-text-muted opacity-50" />
             <h3 className="text-base font-semibold theme-text mb-1">No Sales Found</h3>
             <p className="theme-text-muted text-sm">
-              {pagination.total === 0 ? 'No sales have been recorded yet' : 'Try adjusting your filters'}
+              {pagination.total === 0 
+                ? isAdmin && viewMode === 'personal' 
+                  ? 'You haven\'t created any sales yet' 
+                  : 'No sales have been recorded yet' 
+                : 'Try adjusting your filters'
+              }
             </p>
           </div>
         ) : (
@@ -1456,6 +1550,16 @@ const SalesTab = ({ user, onSalesUpdate, isOnline = true }) => {
                         </div>
                       </div>
                     </div>
+
+                    {/* Show seller info for admin in system view */}
+                    {isAdmin && viewMode === 'system' && sale.soldBy && (
+                      <div className="mb-2 p-1.5 bg-gray-50 rounded-lg">
+                        <p className="text-[10px] text-gray-600 flex items-center gap-1">
+                          <User className="h-2.5 w-2.5" />
+                          Sold by: {sale.soldBy.name || 'Unknown'}
+                        </p>
+                      </div>
+                    )}
 
                     {/* Action Buttons */}
                     <div className="flex gap-1 pt-3 border-t theme-border">
