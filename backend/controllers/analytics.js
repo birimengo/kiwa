@@ -1,52 +1,6 @@
-// controllers/analyticsController.js
 const Product = require('../models/Product');
 const Sale = require('../models/Sale');
 const mongoose = require('mongoose');
-
-// Helper function to add user filter based on route and user role
-const addUserFilterToQuery = (req, query, fieldName = 'soldBy') => {
-  console.log(`🔍 Analytics Filter - Path: ${req.path}, User: ${req.user?.name} (${req.user?.role})`);
-  
-  // Always filter for non-admin users
-  if (req.user && req.user._id && req.user.role !== 'admin') {
-    query[fieldName] = req.user._id;
-    console.log(`🔍 [NON-ADMIN] Filtering by ${fieldName}: ${req.user._id}`);
-    return query;
-  }
-  
-  // For admin users, check route and query parameters to determine view
-  if (req.user && req.user._id && req.user.role === 'admin') {
-    // Check query parameter first for explicit view preference
-    const viewParam = req.query.view;
-    const isExplicitPersonalView = viewParam === 'personal' || viewParam === 'my';
-    const isExplicitSystemView = viewParam === 'system' || viewParam === 'all';
-    
-    // Determine if this is a personal view route
-    const isPersonalRoute = req.path.includes('/user/') || 
-                          req.path.includes('/admin/') ||
-                          req.path.includes('/my/');
-    
-    // Decision logic with priority: query param > route > default system view
-    if (isExplicitPersonalView || (isPersonalRoute && !isExplicitSystemView)) {
-      // Admin personal view - filter to their data
-      query[fieldName] = req.user._id;
-      console.log(`🔍 [ADMIN PERSONAL VIEW] Filtering by ${fieldName}: ${req.user._id}`);
-    } else if (isExplicitSystemView) {
-      // Admin system view - no filter (sees all)
-      console.log(`🔍 [ADMIN SYSTEM VIEW] No filter - showing all data`);
-    } else {
-      // Default behavior based on route
-      if (isPersonalRoute) {
-        query[fieldName] = req.user._id;
-        console.log(`🔍 [ADMIN PERSONAL ROUTE] Filtering by ${fieldName}: ${req.user._id}`);
-      } else {
-        console.log(`🔍 [ADMIN SYSTEM DEFAULT] No filter - showing all data`);
-      }
-    }
-  }
-  
-  return query;
-};
 
 // Helper function to add date range filter
 const addDateRangeFilter = (period, query) => {
@@ -79,10 +33,10 @@ const addDateRangeFilter = (period, query) => {
 // Get consolidated analytics data (for frontend)
 exports.getMyAnalytics = async (req, res) => {
   try {
-    const { period = 'week', limit = 8, view = 'auto' } = req.query;
+    const { period = 'week', limit = 8 } = req.query;
     
-    console.log(`📊 CONSOLIDATED ANALYTICS - User: ${req.user?.name} (${req.user?.role}), Period: ${period}, View param: ${view}`);
-    console.log(`🔍 Path analysis: ${req.path}`);
+    console.log(`📊 CONSOLIDATED ANALYTICS - User: ${req.user?.name} (${req.user?.role}), Period: ${period}`);
+    console.log(`🔍 Path: ${req.path}`);
 
     // Build base queries
     let salesQuery = { status: 'completed' };
@@ -91,59 +45,14 @@ exports.getMyAnalytics = async (req, res) => {
     // Add date range to sales query
     salesQuery = addDateRangeFilter(period, salesQuery);
     
-    // Apply user filtering with improved logic
-    // 1. Non-admin users: Always filter to their data
-    // 2. Admin users: Use query param > route analysis > default behavior
-    
+    // CRITICAL FIX: /my-analytics endpoint should ALWAYS return personal data
     const userId = req.user?._id;
-    const userRole = req.user?.role;
     
-    // Analyze route for personal/system view indication
-    const isPersonalRoute = req.path.includes('/user/') || 
-                          req.path.includes('/admin/') ||
-                          req.path.includes('/my/');
+    console.log(`🎯 /my-analytics endpoint - FORCING personal view for user: ${userId}`);
+    salesQuery.soldBy = userId;
+    productQuery.createdBy = userId;
     
-    // Determine view type based on multiple factors
-    let viewType = 'system'; // default for admin
-    let isPersonalView = false;
-    
-    if (userRole !== 'admin') {
-      // Non-admin: Always personal view
-      isPersonalView = true;
-      viewType = 'personal';
-      salesQuery.soldBy = userId;
-      productQuery.createdBy = userId;
-      console.log(`👤 Non-admin user - filtering to personal data`);
-    } else {
-      // Admin: Complex decision logic
-      if (view === 'personal' || view === 'my') {
-        // Explicit personal view requested
-        isPersonalView = true;
-        viewType = 'personal';
-        salesQuery.soldBy = userId;
-        productQuery.createdBy = userId;
-        console.log(`👑 Admin - explicit personal view requested`);
-      } else if (view === 'system' || view === 'all') {
-        // Explicit system view requested
-        isPersonalView = false;
-        viewType = 'system';
-        console.log(`👑 Admin - explicit system view requested`);
-      } else if (isPersonalRoute) {
-        // Personal route detected
-        isPersonalView = true;
-        viewType = 'personal';
-        salesQuery.soldBy = userId;
-        productQuery.createdBy = userId;
-        console.log(`👑 Admin - personal route detected`);
-      } else {
-        // Default: System view for analytics dashboard
-        isPersonalView = false;
-        viewType = 'system';
-        console.log(`👑 Admin - default system view for analytics`);
-      }
-    }
-    
-    console.log(`🔍 Final filters - View type: ${viewType}, Sales filtered: ${!!salesQuery.soldBy}, Products filtered: ${!!productQuery.createdBy}`);
+    console.log(`🔍 Final filters - User ID: ${userId}`);
 
     // ============================================
     // 1. SALES OVERVIEW
@@ -169,6 +78,8 @@ exports.getMyAnalytics = async (req, res) => {
       totalItemsSold: 0,
       averageSale: 0
     };
+
+    console.log(`📈 Sales overview - User ${userId}: ${salesOverview.totalSales} sales`);
 
     // ============================================
     // 2. PRODUCT ANALYTICS
@@ -213,6 +124,8 @@ exports.getMyAnalytics = async (req, res) => {
       lowStock: 0
     };
 
+    console.log(`📦 Product analytics - User ${userId}: ${productAnalytics.totalProducts} products`);
+
     // ============================================
     // 3. TOP PRODUCTS
     // ============================================
@@ -222,6 +135,8 @@ exports.getMyAnalytics = async (req, res) => {
       .sort({ totalSold: -1 })
       .limit(parseInt(limit))
       .lean();
+
+    console.log(`🏆 Top products for user ${userId}: ${topProducts.length} products`);
 
     // ============================================
     // 4. INVENTORY ANALYTICS
@@ -312,9 +227,7 @@ exports.getMyAnalytics = async (req, res) => {
     };
     
     // Apply same user filter for daily sales
-    if (salesQuery.soldBy) {
-      dailySalesQuery.soldBy = salesQuery.soldBy;
-    }
+    dailySalesQuery.soldBy = userId;
 
     const dailyPerformanceAgg = await Sale.aggregate([
       { $match: dailySalesQuery },
@@ -354,6 +267,8 @@ exports.getMyAnalytics = async (req, res) => {
       .sort({ totalSold: -1 })
       .limit(parseInt(limit))
       .lean();
+
+    console.log(`👀 Product tracking for user ${userId}: ${trackingProducts.length} products`);
 
     const productTracking = trackingProducts.map(product => {
       const totalRevenue = product.sellingPrice * product.totalSold;
@@ -410,23 +325,24 @@ exports.getMyAnalytics = async (req, res) => {
       productTracking
     };
 
-    console.log(`✅ ANALYTICS COMPLETE - Products: ${productAnalytics.totalProducts}, Sales: ${salesOverview.totalSales}`);
-    console.log(`🔍 VIEW SUMMARY - Type: ${viewType}, User: ${req.user?.name}, Period: ${period}`);
+    console.log(`✅ ANALYTICS COMPLETE for user ${userId}:`);
+    console.log(`   - Products: ${productAnalytics.totalProducts}`);
+    console.log(`   - Sales: ${salesOverview.totalSales}`);
+    console.log(`   - Revenue: ${salesOverview.totalRevenue}`);
+    console.log(`   - User: ${req.user?.name} (${req.user?.role})`);
 
     res.json({
       success: true,
       period,
       ...consolidatedData,
       filterInfo: {
-        isPersonalView,
-        userRole: userRole,
-        userId: salesQuery.soldBy || null,
-        viewType,
+        isPersonalView: true,
+        userRole: req.user?.role,
+        userId: userId,
+        viewType: 'personal',
         currentUserId: userId,
         period,
-        routePath: req.path,
-        queryViewParam: view,
-        totalDataPoints: productAnalytics.totalProducts + salesOverview.totalSales
+        routePath: req.path
       }
     });
 
@@ -448,6 +364,7 @@ exports.getSalesOverview = async (req, res) => {
     const { period = 'week', view = 'auto' } = req.query;
     
     console.log(`📊 SALES OVERVIEW - User: ${req.user?.name}, Period: ${period}, View: ${view}`);
+    console.log(`🔍 Path: ${req.path}`);
 
     // Build base query
     let baseQuery = { status: 'completed' };
@@ -460,20 +377,24 @@ exports.getSalesOverview = async (req, res) => {
     const userRole = req.user?.role;
     let isPersonalView = false;
     
+    // Determine if this is a personal view route
+    const isPersonalRoute = req.path.includes('/user/') || 
+                          req.path.includes('/admin/') ||
+                          req.path.includes('/my/') ||
+                          req.path.includes('/my-analytics');
+    
     if (userRole !== 'admin') {
       baseQuery.soldBy = userId;
       isPersonalView = true;
+      console.log(`👤 Non-admin user - filtering to personal data`);
+    } else if (isPersonalRoute || view === 'personal' || view === 'my') {
+      // Personal route or explicit personal view
+      baseQuery.soldBy = userId;
+      isPersonalView = true;
+      console.log(`👑 Admin personal view - filtering to personal data`);
     } else {
-      if (view === 'personal' || view === 'my') {
-        baseQuery.soldBy = userId;
-        isPersonalView = true;
-      } else if (view === 'system' || view === 'all') {
-        isPersonalView = false;
-      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
-        baseQuery.soldBy = userId;
-        isPersonalView = true;
-      }
-      // Default: no filter (system view)
+      // Admin system view
+      console.log(`👑 Admin system view - showing all data`);
     }
 
     // Get sales statistics
@@ -499,7 +420,7 @@ exports.getSalesOverview = async (req, res) => {
       averageSale: 0
     };
 
-    console.log(`✅ Sales overview: ${result.totalSales} sales, Revenue: ${result.totalRevenue}`);
+    console.log(`✅ Sales overview: ${result.totalSales} sales, Revenue: ${result.totalRevenue}, Filtered by: ${baseQuery.soldBy ? 'user' : 'system'}`);
 
     res.json({
       success: true,
@@ -529,6 +450,7 @@ exports.getProductAnalytics = async (req, res) => {
   try {
     const { view = 'auto' } = req.query;
     console.log(`📈 PRODUCT ANALYTICS - User: ${req.user?.name}, View: ${view}`);
+    console.log(`🔍 Path: ${req.path}`);
 
     // Build query
     let productQuery = { isActive: true };
@@ -538,20 +460,24 @@ exports.getProductAnalytics = async (req, res) => {
     const userRole = req.user?.role;
     let isPersonalView = false;
     
+    // Determine if this is a personal view route
+    const isPersonalRoute = req.path.includes('/user/') || 
+                          req.path.includes('/admin/') ||
+                          req.path.includes('/my/') ||
+                          req.path.includes('/my-analytics');
+    
     if (userRole !== 'admin') {
       productQuery.createdBy = userId;
       isPersonalView = true;
+      console.log(`👤 Non-admin user - filtering to personal data`);
+    } else if (isPersonalRoute || view === 'personal' || view === 'my') {
+      // Personal route or explicit personal view
+      productQuery.createdBy = userId;
+      isPersonalView = true;
+      console.log(`👑 Admin personal view - filtering to personal data`);
     } else {
-      if (view === 'personal' || view === 'my') {
-        productQuery.createdBy = userId;
-        isPersonalView = true;
-      } else if (view === 'system' || view === 'all') {
-        isPersonalView = false;
-      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
-        productQuery.createdBy = userId;
-        isPersonalView = true;
-      }
-      // Default: no filter (system view)
+      // Admin system view
+      console.log(`👑 Admin system view - showing all data`);
     }
 
     // Get product statistics
@@ -603,7 +529,7 @@ exports.getProductAnalytics = async (req, res) => {
       lowStock: 0
     };
 
-    console.log(`✅ Product analytics: ${stats.totalProducts} products, Profit: ${stats.totalProfit}`);
+    console.log(`✅ Product analytics: ${stats.totalProducts} products, Profit: ${stats.totalProfit}, Filtered by: ${productQuery.createdBy ? 'user' : 'system'}`);
 
     res.json({
       success: true,
@@ -633,6 +559,7 @@ exports.getInventoryAnalytics = async (req, res) => {
   try {
     const { view = 'auto' } = req.query;
     console.log(`📦 INVENTORY ANALYTICS - User: ${req.user?.name}, View: ${view}`);
+    console.log(`🔍 Path: ${req.path}`);
 
     let productQuery = { isActive: true };
     
@@ -641,20 +568,24 @@ exports.getInventoryAnalytics = async (req, res) => {
     const userRole = req.user?.role;
     let isPersonalView = false;
     
+    // Determine if this is a personal view route
+    const isPersonalRoute = req.path.includes('/user/') || 
+                          req.path.includes('/admin/') ||
+                          req.path.includes('/my/') ||
+                          req.path.includes('/my-analytics');
+    
     if (userRole !== 'admin') {
       productQuery.createdBy = userId;
       isPersonalView = true;
+      console.log(`👤 Non-admin user - filtering to personal data`);
+    } else if (isPersonalRoute || view === 'personal' || view === 'my') {
+      // Personal route or explicit personal view
+      productQuery.createdBy = userId;
+      isPersonalView = true;
+      console.log(`👑 Admin personal view - filtering to personal data`);
     } else {
-      if (view === 'personal' || view === 'my') {
-        productQuery.createdBy = userId;
-        isPersonalView = true;
-      } else if (view === 'system' || view === 'all') {
-        isPersonalView = false;
-      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
-        productQuery.createdBy = userId;
-        isPersonalView = true;
-      }
-      // Default: no filter (system view)
+      // Admin system view
+      console.log(`👑 Admin system view - showing all data`);
     }
 
     const inventoryStats = await Product.aggregate([
@@ -681,7 +612,7 @@ exports.getInventoryAnalytics = async (req, res) => {
       totalItems: 0
     };
 
-    console.log(`✅ Inventory analytics: ${stats.totalProducts} products, Stock value: ${stats.totalStockValue}`);
+    console.log(`✅ Inventory analytics: ${stats.totalProducts} products, Stock value: ${stats.totalStockValue}, Filtered by: ${productQuery.createdBy ? 'user' : 'system'}`);
 
     res.json({
       success: true,
@@ -711,6 +642,7 @@ exports.getPerformanceMetrics = async (req, res) => {
     const { period = 'week', view = 'auto' } = req.query;
 
     console.log(`🚀 PERFORMANCE METRICS - User: ${req.user?.name}, Period: ${period}, View: ${view}`);
+    console.log(`🔍 Path: ${req.path}`);
 
     // Sales query
     let salesQuery = { status: 'completed' };
@@ -724,23 +656,26 @@ exports.getPerformanceMetrics = async (req, res) => {
     const userRole = req.user?.role;
     let isPersonalView = false;
     
+    // Determine if this is a personal view route
+    const isPersonalRoute = req.path.includes('/user/') || 
+                          req.path.includes('/admin/') ||
+                          req.path.includes('/my/') ||
+                          req.path.includes('/my-analytics');
+    
     if (userRole !== 'admin') {
       salesQuery.soldBy = userId;
       productQuery.createdBy = userId;
       isPersonalView = true;
+      console.log(`👤 Non-admin user - filtering to personal data`);
+    } else if (isPersonalRoute || view === 'personal' || view === 'my') {
+      // Personal route or explicit personal view
+      salesQuery.soldBy = userId;
+      productQuery.createdBy = userId;
+      isPersonalView = true;
+      console.log(`👑 Admin personal view - filtering to personal data`);
     } else {
-      if (view === 'personal' || view === 'my') {
-        salesQuery.soldBy = userId;
-        productQuery.createdBy = userId;
-        isPersonalView = true;
-      } else if (view === 'system' || view === 'all') {
-        isPersonalView = false;
-      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
-        salesQuery.soldBy = userId;
-        productQuery.createdBy = userId;
-        isPersonalView = true;
-      }
-      // Default: no filter (system view)
+      // Admin system view
+      console.log(`👑 Admin system view - showing all data`);
     }
 
     // Get sales performance
@@ -789,7 +724,7 @@ exports.getPerformanceMetrics = async (req, res) => {
       averageProfitMargin: 0
     };
 
-    console.log(`✅ Performance metrics: ${salesData.totalSales} sales, Margin: ${productData.averageProfitMargin?.toFixed(1)}%`);
+    console.log(`✅ Performance metrics: ${salesData.totalSales} sales, Margin: ${productData.averageProfitMargin?.toFixed(1)}%, Filtered by: ${salesQuery.soldBy ? 'user' : 'system'}`);
 
     res.json({
       success: true,
@@ -826,6 +761,7 @@ exports.getDailyPerformance = async (req, res) => {
     nextDay.setDate(nextDay.getDate() + 1);
 
     console.log(`📅 DAILY PERFORMANCE - Date: ${targetDate.toDateString()}, User: ${req.user?.name}, View: ${view}`);
+    console.log(`🔍 Path: ${req.path}`);
 
     // Sales query
     let salesQuery = {
@@ -838,20 +774,24 @@ exports.getDailyPerformance = async (req, res) => {
     const userRole = req.user?.role;
     let isPersonalView = false;
     
+    // Determine if this is a personal view route
+    const isPersonalRoute = req.path.includes('/user/') || 
+                          req.path.includes('/admin/') ||
+                          req.path.includes('/my/') ||
+                          req.path.includes('/my-analytics');
+    
     if (userRole !== 'admin') {
       salesQuery.soldBy = userId;
       isPersonalView = true;
+      console.log(`👤 Non-admin user - filtering to personal data`);
+    } else if (isPersonalRoute || view === 'personal' || view === 'my') {
+      // Personal route or explicit personal view
+      salesQuery.soldBy = userId;
+      isPersonalView = true;
+      console.log(`👑 Admin personal view - filtering to personal data`);
     } else {
-      if (view === 'personal' || view === 'my') {
-        salesQuery.soldBy = userId;
-        isPersonalView = true;
-      } else if (view === 'system' || view === 'all') {
-        isPersonalView = false;
-      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
-        salesQuery.soldBy = userId;
-        isPersonalView = true;
-      }
-      // Default: no filter (system view)
+      // Admin system view
+      console.log(`👑 Admin system view - showing all data`);
     }
 
     // Get daily sales
@@ -877,7 +817,7 @@ exports.getDailyPerformance = async (req, res) => {
       averageSaleValue: 0
     };
 
-    console.log(`✅ Daily performance: ${dailyData.totalSales} sales, Revenue: ${dailyData.totalRevenue}`);
+    console.log(`✅ Daily performance: ${dailyData.totalSales} sales, Revenue: ${dailyData.totalRevenue}, Filtered by: ${salesQuery.soldBy ? 'user' : 'system'}`);
 
     res.json({
       success: true,
@@ -912,6 +852,7 @@ exports.getProductTracking = async (req, res) => {
     const { limit = 10, view = 'auto' } = req.query;
 
     console.log(`👀 PRODUCT TRACKING - User: ${req.user?.name}, View: ${view}`);
+    console.log(`🔍 Path: ${req.path}`);
 
     let productQuery = { isActive: true };
     
@@ -920,20 +861,24 @@ exports.getProductTracking = async (req, res) => {
     const userRole = req.user?.role;
     let isPersonalView = false;
     
+    // Determine if this is a personal view route
+    const isPersonalRoute = req.path.includes('/user/') || 
+                          req.path.includes('/admin/') ||
+                          req.path.includes('/my/') ||
+                          req.path.includes('/my-analytics');
+    
     if (userRole !== 'admin') {
       productQuery.createdBy = userId;
       isPersonalView = true;
+      console.log(`👤 Non-admin user - filtering to personal data`);
+    } else if (isPersonalRoute || view === 'personal' || view === 'my') {
+      // Personal route or explicit personal view
+      productQuery.createdBy = userId;
+      isPersonalView = true;
+      console.log(`👑 Admin personal view - filtering to personal data`);
     } else {
-      if (view === 'personal' || view === 'my') {
-        productQuery.createdBy = userId;
-        isPersonalView = true;
-      } else if (view === 'system' || view === 'all') {
-        isPersonalView = false;
-      } else if (req.path.includes('/user/') || req.path.includes('/my/')) {
-        productQuery.createdBy = userId;
-        isPersonalView = true;
-      }
-      // Default: no filter (system view)
+      // Admin system view
+      console.log(`👑 Admin system view - showing all data`);
     }
 
     const products = await Product.find(productQuery)
@@ -942,6 +887,8 @@ exports.getProductTracking = async (req, res) => {
       .sort({ totalSold: -1 })
       .limit(parseInt(limit))
       .lean();
+
+    console.log(`🔍 Found ${products.length} products for tracking`);
 
     const trackingData = products.map(product => {
       const totalRevenue = product.sellingPrice * product.totalSold;
@@ -985,7 +932,7 @@ exports.getProductTracking = async (req, res) => {
       };
     });
 
-    console.log(`✅ Product tracking: ${trackingData.length} products`);
+    console.log(`✅ Product tracking: ${trackingData.length} products, Filtered by: ${productQuery.createdBy ? 'user' : 'system'}`);
 
     res.json({
       success: true,
