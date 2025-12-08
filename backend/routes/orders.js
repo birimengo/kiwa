@@ -11,8 +11,7 @@ const {
   processOrder,
   deliverOrder,
   rejectOrder,
-  confirmDelivery,
-  debugMyOrders  // Add this
+  confirmDelivery
 } = require('../controllers/orders');
 const { protect, authorize } = require('../middleware/auth');
 const filterByUser = require('../middleware/filterByUser');
@@ -22,7 +21,6 @@ const router = express.Router();
 // User routes
 router.post('/', protect, createOrder);
 router.get('/my-orders', protect, getMyOrders);
-router.get('/debug/my-orders', protect, debugMyOrders);  // Add debug route
 router.get('/:id', protect, getOrder);
 router.put('/:id/cancel', protect, cancelOrder);
 router.put('/:id/confirm-delivery', protect, confirmDelivery);

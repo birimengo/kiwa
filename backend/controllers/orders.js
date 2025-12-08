@@ -417,58 +417,35 @@ exports.createOrder = async (req, res) => {
   }
 };
 
-// @desc    Get user's orders - FIXED VERSION
+// @desc    Get user's orders
 // @route   GET /api/orders/my-orders
 // @access  Private
 exports.getMyOrders = async (req, res) => {
   try {
     const { page = 1, limit = 10, status } = req.query;
     
-    console.log('📋 [getMyOrders] Fetching user orders...');
-    console.log('👤 [getMyOrders] User ID:', req.user ? req.user.id : 'No user');
-    console.log('👤 [getMyOrders] User email:', req.user ? req.user.email : 'No user');
-    console.log('👤 [getMyOrders] User role:', req.user ? req.user.role : 'No role');
-    
-    // CRITICAL FIX: Convert user ID to ObjectId and ensure proper filtering
-    const userId = new mongoose.Types.ObjectId(req.user.id);
+    console.log('📋 Fetching user orders...');
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
     // Regular users can only see their own orders
-    let query = { 'customer.user': userId };
-    
-    console.log('🔍 [getMyOrders] Database query:', JSON.stringify(query));
+    let query = { 'customer.user': req.user.id };
     
     if (status && status !== 'all') {
       query.orderStatus = status;
-      console.log('🔍 [getMyOrders] Additional status filter:', status);
     }
     
     const skip = (page - 1) * limit;
     
-    // Fetch orders - FIXED: Use proper population
     const orders = await Order.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
-      .populate({
-        path: 'customer.user',
-        select: 'name email phone'
-      })
-      .populate('items.product', 'name images category brand')
+      .populate('items.product', 'name images category')
       .lean();
     
     const total = await Order.countDocuments(query);
     
-    console.log(`✅ [getMyOrders] Fetched ${orders.length} orders for user ${req.user.id}`);
-    
-    // Debug: Check the first order's customer user ID
-    if (orders.length > 0) {
-      console.log('🔍 [getMyOrders] First order customer:', {
-        orderNumber: orders[0].orderNumber,
-        customerUserId: orders[0].customer?.user?._id || orders[0].customer?.user,
-        currentUserId: req.user.id,
-        match: (orders[0].customer?.user?._id?.toString() || orders[0].customer?.user?.toString()) === req.user.id.toString()
-      });
-    }
+    console.log(`📋 Fetched ${orders.length} orders for user ${req.user.name}`);
     
     res.json({
       success: true,
@@ -483,32 +460,27 @@ exports.getMyOrders = async (req, res) => {
       filterInfo: {
         isFiltered: true,
         userId: req.user._id,
-        viewType: 'personal',
-        message: `Showing orders for ${req.user.email}`
+        viewType: 'personal'
       }
     });
     
   } catch (error) {
-    console.error('❌ [getMyOrders] Error:', error);
+    console.error('❌ Get my orders error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error while fetching your orders',
-      error: error.message,
-      debug: {
-        userId: req.user?.id,
-        timestamp: new Date().toISOString()
-      }
+      message: 'Server error while fetching orders',
+      error: error.message
     });
   }
 };
 
-// @desc    Get single order - FIXED VERSION
+// @desc    Get single order
 // @route   GET /api/orders/:id
 // @access  Private
 exports.getOrder = async (req, res) => {
   try {
-    console.log('📦 [getOrder] Fetching single order:', req.params.id);
-    console.log('👤 [getOrder] User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    console.log('📦 Fetching single order:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
     const order = await Order.findById(req.params.id)
       .populate('customer.user', 'name email phone')
@@ -525,20 +497,10 @@ exports.getOrder = async (req, res) => {
     }
     
     // Check if user owns the order or is admin
-    const customerUserId = order.customer.user?._id || order.customer.user;
-    const isOwner = customerUserId.toString() === req.user.id.toString();
+    const isOwner = order.customer.user._id.toString() === req.user.id;
     const isAdmin = req.user.role === 'admin';
     const isProcessor = order.processedBy && order.processedBy._id.toString() === req.user.id;
     const isDeliverer = order.deliveredBy && order.deliveredBy._id.toString() === req.user.id;
-    
-    console.log('🔐 [getOrder] Ownership check:', {
-      orderCustomerId: customerUserId,
-      currentUserId: req.user.id,
-      isOwner,
-      isAdmin,
-      isProcessor,
-      isDeliverer
-    });
     
     if (!isOwner && !isAdmin && !isProcessor && !isDeliverer) {
       return res.status(403).json({
@@ -547,7 +509,7 @@ exports.getOrder = async (req, res) => {
       });
     }
     
-    console.log(`📦 [getOrder] Fetched order ${order.orderNumber}`);
+    console.log(`📦 Fetched order ${order.orderNumber}`);
     
     res.json({
       success: true,
@@ -566,7 +528,7 @@ exports.getOrder = async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ [getOrder] Error:', error);
+    console.error('❌ Get order error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while fetching order',
@@ -673,15 +635,15 @@ exports.updateOrderStatus = async (req, res) => {
   }
 };
 
-// @desc    Cancel order (User) - FIXED VERSION
+// @desc    Cancel order (User)
 // @route   PUT /api/orders/:id/cancel
 // @access  Private
 exports.cancelOrder = async (req, res) => {
   const session = await mongoose.startSession();
   
   try {
-    console.log('❌ [cancelOrder] Cancelling order:', req.params.id);
-    console.log('👤 [cancelOrder] User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    console.log('❌ Cancelling order:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
     await session.startTransaction();
     const { reason } = req.body;
@@ -697,17 +659,8 @@ exports.cancelOrder = async (req, res) => {
       });
     }
     
-    // CRITICAL FIX: Check if user owns the order
-    const customerUserId = order.customer.user?._id || order.customer.user;
-    const isOwner = customerUserId.toString() === req.user.id.toString();
-    
-    console.log('🔐 [cancelOrder] Ownership check:', {
-      orderCustomerId: customerUserId,
-      currentUserId: req.user.id,
-      isOwner
-    });
-    
-    if (!isOwner) {
+    // Check if user owns the order
+    if (order.customer.user.toString() !== req.user.id) {
       await session.abortTransaction();
       await session.endSession();
       return res.status(403).json({
@@ -758,7 +711,7 @@ exports.cancelOrder = async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ [cancelOrder] Error:', error);
+    console.error('❌ Cancel order error:', error);
     
     if (session) {
       try {
@@ -1028,15 +981,15 @@ exports.rejectOrder = async (req, res) => {
   }
 };
 
-// @desc    Confirm delivery receipt (User) - FIXED VERSION
+// @desc    Confirm delivery receipt (User)
 // @route   PUT /api/orders/:id/confirm-delivery
 // @access  Private
 exports.confirmDelivery = async (req, res) => {
   const session = await mongoose.startSession();
   
   try {
-    console.log('✅ [confirmDelivery] Confirming delivery for order:', req.params.id);
-    console.log('👤 [confirmDelivery] User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
+    console.log('✅ Confirming delivery for order:', req.params.id);
+    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
     await session.startTransaction();
     const { confirmationNote } = req.body;
@@ -1052,17 +1005,8 @@ exports.confirmDelivery = async (req, res) => {
       });
     }
     
-    // CRITICAL FIX: Check if user owns the order
-    const customerUserId = order.customer.user?._id || order.customer.user;
-    const isOwner = customerUserId.toString() === req.user.id.toString();
-    
-    console.log('🔐 [confirmDelivery] Ownership check:', {
-      orderCustomerId: customerUserId,
-      currentUserId: req.user.id,
-      isOwner
-    });
-    
-    if (!isOwner) {
+    // Check if user owns the order
+    if (order.customer.user.toString() !== req.user.id) {
       await session.abortTransaction();
       await session.endSession();
       return res.status(403).json({
@@ -1114,7 +1058,7 @@ exports.confirmDelivery = async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ [confirmDelivery] Error:', error);
+    console.error('❌ Confirm delivery error:', error);
     
     if (session) {
       try {
@@ -1508,74 +1452,6 @@ exports.getAdminOrders = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while fetching admin orders',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Debug endpoint to check order filtering
-// @route   GET /api/orders/debug/my-orders
-// @access  Private
-exports.debugMyOrders = async (req, res) => {
-  try {
-    console.log('🔍 [DEBUG] Checking order filtering...');
-    console.log('👤 Authenticated user:', {
-      id: req.user.id,
-      email: req.user.email,
-      name: req.user.name,
-      role: req.user.role
-    });
-    
-    // Check total orders in database
-    const totalOrders = await Order.countDocuments({});
-    console.log(`📊 Total orders in database: ${totalOrders}`);
-    
-    // Check orders for this user
-    const userOrders = await Order.countDocuments({ 'customer.user': req.user.id });
-    console.log(`📊 Orders for user ${req.user.id}: ${userOrders}`);
-    
-    // Get sample of all orders
-    const allOrders = await Order.find({})
-      .limit(5)
-      .select('orderNumber customer.user orderStatus')
-      .populate('customer.user', 'email name')
-      .lean();
-    
-    // Get sample of user's orders
-    const myOrders = await Order.find({ 'customer.user': req.user.id })
-      .limit(5)
-      .select('orderNumber customer.user orderStatus')
-      .populate('customer.user', 'email name')
-      .lean();
-    
-    res.json({
-      success: true,
-      debugInfo: {
-        user: {
-          id: req.user.id,
-          email: req.user.email,
-          name: req.user.name,
-          role: req.user.role
-        },
-        counts: {
-          totalOrders,
-          userOrders,
-          difference: totalOrders - userOrders
-        },
-        sampleAllOrders: allOrders,
-        sampleMyOrders: myOrders,
-        queryTest: {
-          query: { 'customer.user': req.user.id },
-          explanation: "This is the query used in getMyOrders"
-        }
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ [DEBUG] Error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Debug error',
       error: error.message
     });
   }
