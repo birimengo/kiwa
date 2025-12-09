@@ -1,4 +1,4 @@
-const Order = require('../models/Order');
+//const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Sale = require('../models/Sale');
 const Notification = require('../models/Notification');
@@ -770,7 +770,7 @@ exports.getAdminProductOrders = async (req, res) => {
   }
 };
 
-// @desc    Get order statistics - SIMPLIFIED AND FIXED VERSION
+// @desc    Get order statistics - FIXED VERSION
 // @route   GET /api/orders/stats
 // @access  Private/Admin
 exports.getOrderStats = async (req, res) => {
@@ -855,10 +855,14 @@ exports.getOrderStats = async (req, res) => {
         ]);
 
         if (aggregation.length > 0) {
-          stats = aggregation[0];
-          // Calculate average order value
-          stats.averageOrderValue = stats.totalOrders > 0 ? 
-            stats.totalRevenue / stats.totalOrders : 0;
+          const result = aggregation[0];
+          stats.totalOrders = result.totalOrders || 0;
+          stats.totalRevenue = result.totalRevenue || 0;
+          stats.pendingOrders = result.pendingOrders || 0;
+          stats.processingOrders = result.processingOrders || 0;
+          stats.deliveredOrders = result.deliveredOrders || 0;
+          stats.confirmedOrders = result.confirmedOrders || 0;
+          stats.cancelledOrders = result.cancelledOrders || 0;
         }
       } catch (error) {
         console.error('Error in my-processed stats:', error);
@@ -887,30 +891,51 @@ exports.getOrderStats = async (req, res) => {
           });
         }
 
-        // Get all orders in the period
-        const orders = await Order.find({
-          createdAt: { $gte: startDate }
-        }).lean();
+        // Build query for orders containing admin's products
+        const query = {
+          createdAt: { $gte: startDate },
+          'items.product': { $in: adminProductIds }
+        };
         
-        // Filter orders that contain admin's products
-        const filteredOrders = orders.filter(order => {
-          return order.items.some(item => {
-            return adminProductIds.some(productId => 
-              productId.toString() === item.product.toString()
-            );
-          });
-        });
+        // Get orders using aggregation
+        const aggregation = await Order.aggregate([
+          {
+            $match: query
+          },
+          {
+            $group: {
+              _id: null,
+              totalOrders: { $sum: 1 },
+              totalRevenue: { $sum: '$totalAmount' },
+              pendingOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] }
+              },
+              processingOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] }
+              },
+              deliveredOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
+              },
+              confirmedOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] }
+              },
+              cancelledOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
+              }
+            }
+          }
+        ]);
 
-        // Calculate stats manually
-        stats.totalOrders = filteredOrders.length;
-        stats.totalRevenue = filteredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
-        stats.pendingOrders = filteredOrders.filter(o => o.orderStatus === 'pending').length;
-        stats.processingOrders = filteredOrders.filter(o => o.orderStatus === 'processing').length;
-        stats.deliveredOrders = filteredOrders.filter(o => o.orderStatus === 'delivered').length;
-        stats.confirmedOrders = filteredOrders.filter(o => o.orderStatus === 'confirmed').length;
-        stats.cancelledOrders = filteredOrders.filter(o => o.orderStatus === 'cancelled').length;
-        stats.averageOrderValue = filteredOrders.length > 0 ? 
-          stats.totalRevenue / filteredOrders.length : 0;
+        if (aggregation.length > 0) {
+          const result = aggregation[0];
+          stats.totalOrders = result.totalOrders || 0;
+          stats.totalRevenue = result.totalRevenue || 0;
+          stats.pendingOrders = result.pendingOrders || 0;
+          stats.processingOrders = result.processingOrders || 0;
+          stats.deliveredOrders = result.deliveredOrders || 0;
+          stats.confirmedOrders = result.confirmedOrders || 0;
+          stats.cancelledOrders = result.cancelledOrders || 0;
+        }
       } catch (error) {
         console.error('Error in my-products stats:', error);
         // Return zero stats on error
@@ -954,10 +979,14 @@ exports.getOrderStats = async (req, res) => {
         ]);
 
         if (aggregation.length > 0) {
-          stats = aggregation[0];
-          // Calculate average order value
-          stats.averageOrderValue = stats.totalOrders > 0 ? 
-            stats.totalRevenue / stats.totalOrders : 0;
+          const result = aggregation[0];
+          stats.totalOrders = result.totalOrders || 0;
+          stats.totalRevenue = result.totalRevenue || 0;
+          stats.pendingOrders = result.pendingOrders || 0;
+          stats.processingOrders = result.processingOrders || 0;
+          stats.deliveredOrders = result.deliveredOrders || 0;
+          stats.confirmedOrders = result.confirmedOrders || 0;
+          stats.cancelledOrders = result.cancelledOrders || 0;
         }
       } catch (error) {
         console.error('Error in my stats:', error);
@@ -1001,16 +1030,24 @@ exports.getOrderStats = async (req, res) => {
         ]);
 
         if (aggregation.length > 0) {
-          stats = aggregation[0];
-          // Calculate average order value
-          stats.averageOrderValue = stats.totalOrders > 0 ? 
-            stats.totalRevenue / stats.totalOrders : 0;
+          const result = aggregation[0];
+          stats.totalOrders = result.totalOrders || 0;
+          stats.totalRevenue = result.totalRevenue || 0;
+          stats.pendingOrders = result.pendingOrders || 0;
+          stats.processingOrders = result.processingOrders || 0;
+          stats.deliveredOrders = result.deliveredOrders || 0;
+          stats.confirmedOrders = result.confirmedOrders || 0;
+          stats.cancelledOrders = result.cancelledOrders || 0;
         }
       } catch (error) {
         console.error('Error in system stats:', error);
         // Return zero stats on error
       }
     }
+
+    // Calculate average order value
+    stats.averageOrderValue = stats.totalOrders > 0 ? 
+      stats.totalRevenue / stats.totalOrders : 0;
 
     // Ensure all values are numbers
     stats.totalOrders = Number(stats.totalOrders) || 0;
