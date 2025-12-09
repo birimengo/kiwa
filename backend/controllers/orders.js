@@ -1553,7 +1553,7 @@ exports.confirmDelivery = async (req, res) => {
   }
 };
 
-// @desc    Get order statistics
+// @desc    Get order statistics - FIXED VERSION
 // @route   GET /api/orders/stats
 // @access  Private/Admin
 exports.getOrderStats = async (req, res) => {
@@ -1582,35 +1582,108 @@ exports.getOrderStats = async (req, res) => {
         startDate.setMonth(startDate.getMonth() - 1);
     }
     
-    // Build query
-    let query = {
+    // Build base query
+    let baseQuery = {
       createdAt: { $gte: startDate }
     };
     
-    // Apply filters based on view
-    if (view === 'my-products') {
-      // Filter by product ownership
-      const adminProductIds = await getAdminProductIds(req.user._id);
-      if (adminProductIds.length > 0) {
-        query['items.product'] = { $in: adminProductIds };
-      } else {
-        query['items.product'] = null;
-      }
-    } else if (view === 'my-processed') {
-      // Filter by processed orders
-      query.processedBy = req.user._id;
-    }
-    
-    console.log(`🔍 Order Stats Query:`, { 
+    console.log(`🔍 Stats Query Parameters:`, { 
       period,
       view,
-      hasProductFilter: !!query['items.product'],
-      hasProcessorFilter: !!query.processedBy
+      startDate,
+      userId: req.user._id
     });
     
+    // Handle different view modes
+    let finalQuery = { ...baseQuery };
+    
+    if (view === 'my-processed') {
+      // Filter by processed orders
+      finalQuery.processedBy = req.user._id;
+      console.log('📊 Filtering by processedBy:', req.user._id);
+    } 
+    else if (view === 'my-products') {
+      // Get admin's product IDs
+      const adminProductIds = await getAdminProductIds(req.user._id);
+      
+      if (adminProductIds.length === 0) {
+        console.log('📊 No products found for admin, returning empty stats');
+        return res.json({
+          success: true,
+          period,
+          view,
+          stats: {
+            totalOrders: 0,
+            totalRevenue: 0,
+            pendingOrders: 0,
+            processingOrders: 0,
+            deliveredOrders: 0,
+            confirmedOrders: 0,
+            cancelledOrders: 0,
+            averageOrderValue: 0
+          },
+          filterInfo: {
+            isFiltered: true,
+            userId: req.user._id,
+            viewType: 'product-ownership',
+            productCount: 0
+          }
+        });
+      }
+      
+      // For product ownership, we need a different approach
+      // Instead of trying to filter in the query, we'll aggregate differently
+      console.log(`📊 Admin has ${adminProductIds.length} products, using special aggregation`);
+      
+      // Use a simplified approach - get all orders and filter in memory
+      // This is less efficient but works for now
+      const allOrders = await Order.find(baseQuery).lean();
+      
+      // Filter orders that contain admin's products
+      const filteredOrders = allOrders.filter(order => {
+        return order.items.some(item => {
+          return adminProductIds.some(productId => 
+            productId.toString() === item.product.toString()
+          );
+        });
+      });
+      
+      // Calculate stats manually
+      const stats = {
+        totalOrders: filteredOrders.length,
+        totalRevenue: filteredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0),
+        pendingOrders: filteredOrders.filter(o => o.orderStatus === 'pending').length,
+        processingOrders: filteredOrders.filter(o => o.orderStatus === 'processing').length,
+        deliveredOrders: filteredOrders.filter(o => o.orderStatus === 'delivered').length,
+        confirmedOrders: filteredOrders.filter(o => o.orderStatus === 'confirmed').length,
+        cancelledOrders: filteredOrders.filter(o => o.orderStatus === 'cancelled').length,
+        averageOrderValue: filteredOrders.length > 0 ? 
+          filteredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0) / filteredOrders.length : 0
+      };
+      
+      return res.json({
+        success: true,
+        period,
+        view,
+        stats,
+        filterInfo: {
+          isFiltered: true,
+          userId: req.user._id,
+          viewType: 'product-ownership',
+          productCount: adminProductIds.length
+        }
+      });
+    }
+    // For 'system' view, no additional filters needed
+    else if (view === 'my') {
+      // Personal view for non-admin users
+      finalQuery['customer.user'] = req.user._id;
+    }
+    
+    // For system and my-processed views, use aggregation
     const stats = await Order.aggregate([
       {
-        $match: query
+        $match: finalQuery
       },
       {
         $group: {
@@ -1665,7 +1738,8 @@ exports.getOrderStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while fetching order statistics',
-      error: error.message
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
