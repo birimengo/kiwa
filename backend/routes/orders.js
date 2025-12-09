@@ -23,7 +23,7 @@ const {
   processOrder,
   deliverOrder,
   rejectOrder
-} = require('../controllers/orderController'); // Note: Fixed to 'orderController'
+} = require('../controllers/orders'); // ✅ CORRECT: Changed from 'orderController' to 'orders'
 const { protect, authorize } = require('../middleware/auth');
 
 const router = express.Router();
