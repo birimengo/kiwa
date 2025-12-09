@@ -88,73 +88,6 @@ async function createOrderNotification(order, type = 'new_order', note = '', tar
   }
 }
 
-// Helper function to create sale from confirmed order
-async function createSaleFromOrder(order, userId, session = null) {
-  try {
-    const saleItems = await Promise.all(
-      order.items.map(async (item) => {
-        const product = await Product.findById(item.product);
-        const unitCost = product.purchasePrice || 0;
-        const totalCost = unitCost * item.quantity;
-        const profit = item.totalPrice - totalCost;
-
-        return {
-          product: item.product,
-          productName: item.productName,
-          productBrand: item.productBrand,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          unitCost,
-          totalPrice: item.totalPrice,
-          totalCost,
-          profit
-        };
-      })
-    );
-
-    const totalCost = saleItems.reduce((sum, item) => sum + item.totalCost, 0);
-    const totalProfit = order.totalAmount - totalCost;
-
-    const saleData = {
-      saleNumber: await generateSaleNumber(),
-      customer: {
-        name: order.customer.name,
-        email: order.customer.email,
-        phone: order.customer.phone,
-        location: order.customer.location
-      },
-      items: saleItems,
-      subtotal: order.subtotal,
-      discountAmount: order.discountAmount || 0,
-      taxAmount: order.taxAmount || 0,
-      totalAmount: order.totalAmount,
-      totalCost,
-      totalProfit,
-      paymentMethod: order.paymentMethod,
-      paymentStatus: 'paid',
-      amountPaid: order.totalAmount,
-      balance: 0,
-      notes: `Sale created from order: ${order.orderNumber}`,
-      soldBy: userId,
-      status: 'completed',
-      orderReference: order._id
-    };
-
-    const sale = new Sale(saleData);
-    
-    if (session) {
-      await sale.save({ session });
-    } else {
-      await sale.save();
-    }
-    
-    return sale;
-  } catch (error) {
-    console.error('❌ Error creating sale from order:', error);
-    throw error;
-  }
-}
-
 // Helper function to generate sale number
 async function generateSaleNumber() {
   const date = new Date();
@@ -179,37 +112,6 @@ async function generateSaleNumber() {
   }
   
   return `SALE-${year}${month}${day}-${String(sequence).padStart(4, '0')}`;
-}
-
-// Helper function to restore stock
-async function restoreOrderStock(order, userId, session = null) {
-  for (const item of order.items) {
-    const product = await Product.findById(item.product);
-    if (product) {
-      const previousStock = product.stock;
-      const newStock = previousStock + item.quantity;
-      
-      product.stock = newStock;
-      product.totalSold = Math.max(0, product.totalSold - item.quantity);
-      
-      product.stockHistory.push({
-        previousStock,
-        newStock,
-        unitsChanged: item.quantity,
-        type: 'restock',
-        reference: order._id,
-        referenceModel: 'Order',
-        user: userId,
-        notes: 'Order cancellation - stock restored'
-      });
-      
-      if (session) {
-        await product.save({ session });
-      } else {
-        await product.save();
-      }
-    }
-  }
 }
 
 // Helper function to calculate shipping fee
@@ -868,21 +770,21 @@ exports.getAdminProductOrders = async (req, res) => {
   }
 };
 
-// @desc    Get order statistics - IMPROVED VERSION
+// @desc    Get order statistics - SIMPLIFIED AND FIXED VERSION
 // @route   GET /api/orders/stats
 // @access  Private/Admin
 exports.getOrderStats = async (req, res) => {
   try {
     const { period = 'month', view = 'system' } = req.query;
     
-    // Validate user authentication
+    // Check if user is authenticated
     if (!req.user || !req.user._id) {
       return res.status(401).json({
         success: false,
         message: 'User not authenticated'
       });
     }
-    
+
     // Calculate start date based on period
     let startDate = new Date();
     switch (period) {
@@ -901,35 +803,225 @@ exports.getOrderStats = async (req, res) => {
       default:
         startDate.setMonth(startDate.getMonth() - 1);
     }
-    
-    // Build base query with date filter
-    const baseQuery = {
-      createdAt: { $gte: startDate }
+
+    // Initialize stats with zero values
+    let stats = {
+      totalOrders: 0,
+      totalRevenue: 0,
+      pendingOrders: 0,
+      processingOrders: 0,
+      deliveredOrders: 0,
+      confirmedOrders: 0,
+      cancelledOrders: 0,
+      averageOrderValue: 0
     };
-    
-    let finalQuery = { ...baseQuery };
-    let stats = {};
-    
+
     // Handle different view modes
     if (view === 'my-processed') {
-      // Orders processed by this admin
-      finalQuery.processedBy = req.user._id;
-      stats = await getAggregatedStats(finalQuery);
+      try {
+        // Build query for orders processed by this admin
+        const query = {
+          createdAt: { $gte: startDate },
+          processedBy: req.user._id
+        };
+        
+        // Get orders using aggregation
+        const aggregation = await Order.aggregate([
+          {
+            $match: query
+          },
+          {
+            $group: {
+              _id: null,
+              totalOrders: { $sum: 1 },
+              totalRevenue: { $sum: '$totalAmount' },
+              pendingOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] }
+              },
+              processingOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] }
+              },
+              deliveredOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
+              },
+              confirmedOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] }
+              },
+              cancelledOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
+              }
+            }
+          }
+        ]);
+
+        if (aggregation.length > 0) {
+          stats = aggregation[0];
+          // Calculate average order value
+          stats.averageOrderValue = stats.totalOrders > 0 ? 
+            stats.totalRevenue / stats.totalOrders : 0;
+        }
+      } catch (error) {
+        console.error('Error in my-processed stats:', error);
+        // Return zero stats on error
+      }
     } 
     else if (view === 'my-products') {
-      // Orders containing products created by this admin
-      stats = await getProductOwnershipStats(req.user._id, baseQuery);
+      try {
+        // Get admin's product IDs
+        const adminProducts = await Product.find({ createdBy: req.user._id }).select('_id');
+        const adminProductIds = adminProducts.map(p => p._id);
+        
+        if (adminProductIds.length === 0) {
+          // Return zero stats if admin has no products
+          return res.json({
+            success: true,
+            period,
+            view,
+            stats,
+            filterInfo: {
+              isFiltered: true,
+              userId: req.user._id,
+              viewType: 'product-ownership',
+              productCount: 0
+            }
+          });
+        }
+
+        // Get all orders in the period
+        const orders = await Order.find({
+          createdAt: { $gte: startDate }
+        }).lean();
+        
+        // Filter orders that contain admin's products
+        const filteredOrders = orders.filter(order => {
+          return order.items.some(item => {
+            return adminProductIds.some(productId => 
+              productId.toString() === item.product.toString()
+            );
+          });
+        });
+
+        // Calculate stats manually
+        stats.totalOrders = filteredOrders.length;
+        stats.totalRevenue = filteredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+        stats.pendingOrders = filteredOrders.filter(o => o.orderStatus === 'pending').length;
+        stats.processingOrders = filteredOrders.filter(o => o.orderStatus === 'processing').length;
+        stats.deliveredOrders = filteredOrders.filter(o => o.orderStatus === 'delivered').length;
+        stats.confirmedOrders = filteredOrders.filter(o => o.orderStatus === 'confirmed').length;
+        stats.cancelledOrders = filteredOrders.filter(o => o.orderStatus === 'cancelled').length;
+        stats.averageOrderValue = filteredOrders.length > 0 ? 
+          stats.totalRevenue / filteredOrders.length : 0;
+      } catch (error) {
+        console.error('Error in my-products stats:', error);
+        // Return zero stats on error
+      }
     }
     else if (view === 'my') {
-      // Personal orders for regular users
-      finalQuery['customer.user'] = req.user._id;
-      stats = await getAggregatedStats(finalQuery);
+      try {
+        // Build query for user's own orders
+        const query = {
+          createdAt: { $gte: startDate },
+          'customer.user': req.user._id
+        };
+        
+        // Get orders using aggregation
+        const aggregation = await Order.aggregate([
+          {
+            $match: query
+          },
+          {
+            $group: {
+              _id: null,
+              totalOrders: { $sum: 1 },
+              totalRevenue: { $sum: '$totalAmount' },
+              pendingOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] }
+              },
+              processingOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] }
+              },
+              deliveredOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
+              },
+              confirmedOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] }
+              },
+              cancelledOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
+              }
+            }
+          }
+        ]);
+
+        if (aggregation.length > 0) {
+          stats = aggregation[0];
+          // Calculate average order value
+          stats.averageOrderValue = stats.totalOrders > 0 ? 
+            stats.totalRevenue / stats.totalOrders : 0;
+        }
+      } catch (error) {
+        console.error('Error in my stats:', error);
+        // Return zero stats on error
+      }
     }
     else {
-      // System view - all orders
-      stats = await getAggregatedStats(finalQuery);
+      try {
+        // System view - all orders
+        const query = {
+          createdAt: { $gte: startDate }
+        };
+        
+        // Get orders using aggregation
+        const aggregation = await Order.aggregate([
+          {
+            $match: query
+          },
+          {
+            $group: {
+              _id: null,
+              totalOrders: { $sum: 1 },
+              totalRevenue: { $sum: '$totalAmount' },
+              pendingOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] }
+              },
+              processingOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] }
+              },
+              deliveredOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
+              },
+              confirmedOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] }
+              },
+              cancelledOrders: {
+                $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
+              }
+            }
+          }
+        ]);
+
+        if (aggregation.length > 0) {
+          stats = aggregation[0];
+          // Calculate average order value
+          stats.averageOrderValue = stats.totalOrders > 0 ? 
+            stats.totalRevenue / stats.totalOrders : 0;
+        }
+      } catch (error) {
+        console.error('Error in system stats:', error);
+        // Return zero stats on error
+      }
     }
-    
+
+    // Ensure all values are numbers
+    stats.totalOrders = Number(stats.totalOrders) || 0;
+    stats.totalRevenue = Number(stats.totalRevenue) || 0;
+    stats.pendingOrders = Number(stats.pendingOrders) || 0;
+    stats.processingOrders = Number(stats.processingOrders) || 0;
+    stats.deliveredOrders = Number(stats.deliveredOrders) || 0;
+    stats.confirmedOrders = Number(stats.confirmedOrders) || 0;
+    stats.cancelledOrders = Number(stats.cancelledOrders) || 0;
+    stats.averageOrderValue = Number(stats.averageOrderValue) || 0;
+
     res.json({
       success: true,
       period,
@@ -941,135 +1033,30 @@ exports.getOrderStats = async (req, res) => {
         viewType: view
       }
     });
-    
+
   } catch (error) {
     console.error('❌ Get order stats error:', error);
+    
+    // Return safe zero stats on any error
+    const zeroStats = {
+      totalOrders: 0,
+      totalRevenue: 0,
+      pendingOrders: 0,
+      processingOrders: 0,
+      deliveredOrders: 0,
+      confirmedOrders: 0,
+      cancelledOrders: 0,
+      averageOrderValue: 0
+    };
+
     res.status(500).json({
       success: false,
       message: 'Server error while fetching order statistics',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      stats: zeroStats
     });
   }
 };
-
-// Helper function for aggregated stats
-async function getAggregatedStats(query) {
-  try {
-    const stats = await Order.aggregate([
-      {
-        $match: query
-      },
-      {
-        $group: {
-          _id: null,
-          totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: '$totalAmount' },
-          pendingOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] }
-          },
-          processingOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] }
-          },
-          deliveredOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
-          },
-          confirmedOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] }
-          },
-          cancelledOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
-          },
-          averageOrderValue: { $avg: '$totalAmount' }
-        }
-      }
-    ]);
-    
-    const result = stats[0] || getZeroStats();
-    
-    // Ensure averageOrderValue is a number
-    result.averageOrderValue = result.averageOrderValue || 0;
-    
-    return result;
-  } catch (error) {
-    console.error('❌ Error in getAggregatedStats:', error);
-    return getZeroStats();
-  }
-}
-
-// Helper function for product ownership stats
-async function getProductOwnershipStats(adminId, baseQuery) {
-  try {
-    const adminProductIds = await getAdminProductIds(adminId);
-    
-    if (adminProductIds.length === 0) {
-      return getZeroStats();
-    }
-    
-    const stats = await Order.aggregate([
-      {
-        $match: baseQuery
-      },
-      {
-        $addFields: {
-          hasAdminProducts: {
-            $gt: [
-              {
-                $size: {
-                  $filter: {
-                    input: "$items.product",
-                    as: "productId",
-                    cond: {
-                      $in: ["$$productId", adminProductIds]
-                    }
-                  }
-                }
-              },
-              0
-            ]
-          }
-        }
-      },
-      {
-        $match: {
-          hasAdminProducts: true
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: '$totalAmount' },
-          pendingOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] }
-          },
-          processingOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] }
-          },
-          deliveredOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
-          },
-          confirmedOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] }
-          },
-          cancelledOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
-          },
-          averageOrderValue: { $avg: '$totalAmount' }
-        }
-      }
-    ]);
-    
-    const result = stats[0] || getZeroStats();
-    
-    // Ensure averageOrderValue is a number
-    result.averageOrderValue = result.averageOrderValue || 0;
-    
-    return result;
-  } catch (error) {
-    console.error('❌ Error in getProductOwnershipStats:', error);
-    return getZeroStats();
-  }
-}
 
 // @desc    Get dashboard statistics
 // @route   GET /api/orders/dashboard/stats
@@ -1247,7 +1234,6 @@ exports.updateOrderStatus = async (req, res) => {
       order.cancelledAt = new Date();
       order.cancellationReason = note || 'Order cancelled by admin';
       await createOrderNotification(order, 'cancelled', order.cancellationReason);
-      await restoreOrderStock(order, req.user.id, session);
     } else if (orderStatus === 'processing') {
       order.processedBy = req.user.id;
       await createOrderNotification(order, 'processing', note);
@@ -1336,7 +1322,6 @@ exports.cancelOrder = async (req, res) => {
     });
     
     await createOrderNotification(order, 'cancelled', order.cancellationReason);
-    await restoreOrderStock(order, req.user.id, session);
     
     await order.save({ session });
     await session.commitTransaction();
@@ -1604,7 +1589,6 @@ exports.rejectOrder = async (req, res) => {
     });
     
     await createOrderNotification(order, 'cancelled', order.cancellationReason, req.user.id);
-    await restoreOrderStock(order, req.user.id, session);
     
     await order.save({ session });
     await session.commitTransaction();
@@ -1690,9 +1674,6 @@ exports.confirmDelivery = async (req, res) => {
     
     await createOrderNotification(order, 'confirmed', confirmationNote, req.user.id);
     
-    const sale = await createSaleFromOrder(order, req.user.id, session);
-    order.saleReference = sale._id;
-    
     await order.save({ session });
     await session.commitTransaction();
     await session.endSession();
@@ -1721,6 +1702,28 @@ exports.confirmDelivery = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while confirming delivery',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Debug endpoint for testing
+// @route   GET /api/orders/debug/user
+// @access  Private/Admin
+exports.debugUser = async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      user: req.user,
+      userId: req.user ? req.user._id : null,
+      userRole: req.user ? req.user.role : null,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Debug error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Debug error',
       error: error.message
     });
   }
