@@ -234,4 +234,52 @@ orderSchema.pre('save', function(next) {
   next();
 });
 
+// Indexes for better query performance
+orderSchema.index({ 'customer.user': 1, createdAt: -1 });
+orderSchema.index({ orderNumber: 1 });
+orderSchema.index({ orderStatus: 1 });
+orderSchema.index({ processedBy: 1 });
+orderSchema.index({ createdAt: 1 });
+orderSchema.index({ 'items.product': 1 });
+
+// Virtual for formatted total amount
+orderSchema.virtual('formattedTotalAmount').get(function() {
+  return new Intl.NumberFormat('en-UG', {
+    style: 'currency',
+    currency: 'UGX',
+    minimumFractionDigits: 0
+  }).format(this.totalAmount);
+});
+
+// Method to get order summary
+orderSchema.methods.getSummary = function() {
+  return {
+    orderNumber: this.orderNumber,
+    customerName: this.customer.name,
+    totalAmount: this.totalAmount,
+    orderStatus: this.orderStatus,
+    paymentStatus: this.paymentStatus,
+    itemCount: this.items.length,
+    createdAt: this.createdAt
+  };
+};
+
+// Static method to find orders by status
+orderSchema.statics.findByStatus = function(status, userId = null) {
+  const query = { orderStatus: status };
+  if (userId) {
+    query['customer.user'] = userId;
+  }
+  return this.find(query).sort({ createdAt: -1 });
+};
+
+// Static method to find orders processed by a specific admin
+orderSchema.statics.findByProcessor = function(adminId, status = null) {
+  const query = { processedBy: adminId };
+  if (status) {
+    query.orderStatus = status;
+  }
+  return this.find(query).sort({ createdAt: -1 });
+};
+
 module.exports = mongoose.model('Order', orderSchema);
