@@ -1,4 +1,5 @@
-//const Order = require('../models/Order');
+// orders.js - COMPLETE UPDATED VERSION
+const Order = require('../models/Order');
 const Product = require('../models/Product');
 const Sale = require('../models/Sale');
 const Notification = require('../models/Notification');
@@ -88,30 +89,15 @@ async function createOrderNotification(order, type = 'new_order', note = '', tar
   }
 }
 
-// Helper function to generate sale number
-async function generateSaleNumber() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  
-  const todayStart = new Date(date.setHours(0, 0, 0, 0));
-  const todayEnd = new Date(date.setHours(23, 59, 59, 999));
-  
-  const lastSale = await Sale.findOne({
-    createdAt: {
-      $gte: todayStart,
-      $lte: todayEnd
-    }
-  }).sort({ createdAt: -1 });
-  
-  let sequence = 1;
-  if (lastSale && lastSale.saleNumber) {
-    const lastSequence = parseInt(lastSale.saleNumber.split('-').pop());
-    sequence = lastSequence + 1;
+// Helper function to get admin's product IDs
+async function getAdminProductIds(adminId) {
+  try {
+    const adminProducts = await Product.find({ createdBy: adminId }).select('_id');
+    return adminProducts.map(p => p._id);
+  } catch (error) {
+    console.error('❌ Error getting admin product IDs:', error);
+    return [];
   }
-  
-  return `SALE-${year}${month}${day}-${String(sequence).padStart(4, '0')}`;
 }
 
 // Helper function to calculate shipping fee
@@ -135,31 +121,6 @@ function calculateShippingFee(items, location) {
 function calculateTaxAmount(subtotal) {
   const taxRate = 0.18;
   return subtotal * taxRate;
-}
-
-// Helper function to get admin's product IDs
-async function getAdminProductIds(adminId) {
-  try {
-    const adminProducts = await Product.find({ createdBy: adminId }).select('_id');
-    return adminProducts.map(p => p._id);
-  } catch (error) {
-    console.error('❌ Error getting admin product IDs:', error);
-    return [];
-  }
-}
-
-// Helper function to get zero stats object
-function getZeroStats() {
-  return {
-    totalOrders: 0,
-    totalRevenue: 0,
-    pendingOrders: 0,
-    processingOrders: 0,
-    deliveredOrders: 0,
-    confirmedOrders: 0,
-    cancelledOrders: 0,
-    averageOrderValue: 0
-  };
 }
 
 // ==================== MAIN CONTROLLER FUNCTIONS ====================
@@ -413,7 +374,7 @@ exports.getMyOrders = async (req, res) => {
       orders,
       filterInfo: {
         isFiltered: true,
-        userId: req.user._id,
+        userId: req.user.id,
         viewType: 'personal'
       }
     });
@@ -596,7 +557,7 @@ exports.getAdminProcessedOrders = async (req, res) => {
   try {
     const { page = 1, limit = 10, status, startDate, endDate } = req.query;
     
-    let query = { processedBy: req.user._id };
+    let query = { processedBy: req.user.id };
     
     if (status && status !== 'all') {
       query.orderStatus = status;
@@ -642,7 +603,7 @@ exports.getAdminProcessedOrders = async (req, res) => {
       orders,
       filterInfo: {
         isFiltered: true,
-        userId: req.user._id,
+        userId: req.user.id,
         viewType: 'processed'
       }
     });
@@ -664,7 +625,7 @@ exports.getAdminProductOrders = async (req, res) => {
   try {
     const { page = 1, limit = 10, status, startDate, endDate } = req.query;
     
-    const adminProductIds = await getAdminProductIds(req.user._id);
+    const adminProductIds = await getAdminProductIds(req.user.id);
     
     if (adminProductIds.length === 0) {
       return res.json({
@@ -679,7 +640,7 @@ exports.getAdminProductOrders = async (req, res) => {
         orders: [],
         filterInfo: {
           isFiltered: true,
-          userId: req.user._id,
+          userId: req.user.id,
           viewType: 'product-ownership',
           productCount: 0
         }
@@ -754,7 +715,7 @@ exports.getAdminProductOrders = async (req, res) => {
       orders: filteredOrders,
       filterInfo: {
         isFiltered: true,
-        userId: req.user._id,
+        userId: req.user.id,
         viewType: 'product-ownership',
         productCount: adminProductIds.length
       }
@@ -778,12 +739,24 @@ exports.getOrderStats = async (req, res) => {
     const { period = 'month', view = 'system' } = req.query;
     
     // Check if user is authenticated
-    if (!req.user || !req.user._id) {
+    if (!req.user || (!req.user.id && !req.user._id)) {
+      console.log('❌ User not authenticated in getOrderStats');
       return res.status(401).json({
         success: false,
         message: 'User not authenticated'
       });
     }
+
+    // Get user ID consistently
+    const userId = req.user.id || req.user._id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'User ID not found'
+      });
+    }
+
+    console.log(`📊 Generating stats for user: ${userId}, view: ${view}, period: ${period}`);
 
     // Calculate start date based on period
     let startDate = new Date();
@@ -817,15 +790,19 @@ exports.getOrderStats = async (req, res) => {
     };
 
     // Handle different view modes
-    if (view === 'my-processed') {
-      try {
+    try {
+      if (view === 'my-processed') {
+        console.log('🔍 Fetching stats for my-processed view');
+        
         // Build query for orders processed by this admin
         const query = {
           createdAt: { $gte: startDate },
-          processedBy: req.user._id
+          processedBy: userId
         };
         
-        // Get orders using aggregation
+        console.log('📋 Query:', JSON.stringify(query));
+        
+        // Get stats using aggregation
         const aggregation = await Order.aggregate([
           {
             $match: query
@@ -855,25 +832,22 @@ exports.getOrderStats = async (req, res) => {
         ]);
 
         if (aggregation.length > 0) {
-          const result = aggregation[0];
-          stats.totalOrders = result.totalOrders || 0;
-          stats.totalRevenue = result.totalRevenue || 0;
-          stats.pendingOrders = result.pendingOrders || 0;
-          stats.processingOrders = result.processingOrders || 0;
-          stats.deliveredOrders = result.deliveredOrders || 0;
-          stats.confirmedOrders = result.confirmedOrders || 0;
-          stats.cancelledOrders = result.cancelledOrders || 0;
+          stats = aggregation[0];
+          // Calculate average order value
+          stats.averageOrderValue = stats.totalOrders > 0 ? 
+            stats.totalRevenue / stats.totalOrders : 0;
         }
-      } catch (error) {
-        console.error('Error in my-processed stats:', error);
-        // Return zero stats on error
-      }
-    } 
-    else if (view === 'my-products') {
-      try {
+        
+        console.log(`✅ my-processed stats: ${JSON.stringify(stats)}`);
+      } 
+      else if (view === 'my-products') {
+        console.log('🔍 Fetching stats for my-products view');
+        
         // Get admin's product IDs
-        const adminProducts = await Product.find({ createdBy: req.user._id }).select('_id');
+        const adminProducts = await Product.find({ createdBy: userId }).select('_id');
         const adminProductIds = adminProducts.map(p => p._id);
+        
+        console.log(`📦 Admin has ${adminProductIds.length} products`);
         
         if (adminProductIds.length === 0) {
           // Return zero stats if admin has no products
@@ -884,69 +858,51 @@ exports.getOrderStats = async (req, res) => {
             stats,
             filterInfo: {
               isFiltered: true,
-              userId: req.user._id,
+              userId: userId,
               viewType: 'product-ownership',
               productCount: 0
             }
           });
         }
 
-        // Build query for orders containing admin's products
-        const query = {
-          createdAt: { $gte: startDate },
-          'items.product': { $in: adminProductIds }
-        };
+        // Get all orders in the period
+        const orders = await Order.find({
+          createdAt: { $gte: startDate }
+        }).lean();
         
-        // Get orders using aggregation
-        const aggregation = await Order.aggregate([
-          {
-            $match: query
-          },
-          {
-            $group: {
-              _id: null,
-              totalOrders: { $sum: 1 },
-              totalRevenue: { $sum: '$totalAmount' },
-              pendingOrders: {
-                $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] }
-              },
-              processingOrders: {
-                $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] }
-              },
-              deliveredOrders: {
-                $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
-              },
-              confirmedOrders: {
-                $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] }
-              },
-              cancelledOrders: {
-                $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
-              }
-            }
-          }
-        ]);
+        console.log(`📊 Found ${orders.length} total orders in period`);
+        
+        // Filter orders that contain admin's products
+        const filteredOrders = orders.filter(order => {
+          return order.items.some(item => {
+            return adminProductIds.some(productId => 
+              productId.toString() === item.product.toString()
+            );
+          });
+        });
 
-        if (aggregation.length > 0) {
-          const result = aggregation[0];
-          stats.totalOrders = result.totalOrders || 0;
-          stats.totalRevenue = result.totalRevenue || 0;
-          stats.pendingOrders = result.pendingOrders || 0;
-          stats.processingOrders = result.processingOrders || 0;
-          stats.deliveredOrders = result.deliveredOrders || 0;
-          stats.confirmedOrders = result.confirmedOrders || 0;
-          stats.cancelledOrders = result.cancelledOrders || 0;
-        }
-      } catch (error) {
-        console.error('Error in my-products stats:', error);
-        // Return zero stats on error
+        console.log(`📊 Found ${filteredOrders.length} orders with admin's products`);
+
+        // Calculate stats manually
+        stats.totalOrders = filteredOrders.length;
+        stats.totalRevenue = filteredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+        stats.pendingOrders = filteredOrders.filter(o => o.orderStatus === 'pending').length;
+        stats.processingOrders = filteredOrders.filter(o => o.orderStatus === 'processing').length;
+        stats.deliveredOrders = filteredOrders.filter(o => o.orderStatus === 'delivered').length;
+        stats.confirmedOrders = filteredOrders.filter(o => o.orderStatus === 'confirmed').length;
+        stats.cancelledOrders = filteredOrders.filter(o => o.orderStatus === 'cancelled').length;
+        stats.averageOrderValue = filteredOrders.length > 0 ? 
+          stats.totalRevenue / filteredOrders.length : 0;
+          
+        console.log(`✅ my-products stats: ${JSON.stringify(stats)}`);
       }
-    }
-    else if (view === 'my') {
-      try {
+      else if (view === 'my') {
+        console.log('🔍 Fetching stats for my (personal) view');
+        
         // Build query for user's own orders
         const query = {
           createdAt: { $gte: startDate },
-          'customer.user': req.user._id
+          'customer.user': userId
         };
         
         // Get orders using aggregation
@@ -979,22 +935,14 @@ exports.getOrderStats = async (req, res) => {
         ]);
 
         if (aggregation.length > 0) {
-          const result = aggregation[0];
-          stats.totalOrders = result.totalOrders || 0;
-          stats.totalRevenue = result.totalRevenue || 0;
-          stats.pendingOrders = result.pendingOrders || 0;
-          stats.processingOrders = result.processingOrders || 0;
-          stats.deliveredOrders = result.deliveredOrders || 0;
-          stats.confirmedOrders = result.confirmedOrders || 0;
-          stats.cancelledOrders = result.cancelledOrders || 0;
+          stats = aggregation[0];
+          stats.averageOrderValue = stats.totalOrders > 0 ? 
+            stats.totalRevenue / stats.totalOrders : 0;
         }
-      } catch (error) {
-        console.error('Error in my stats:', error);
-        // Return zero stats on error
       }
-    }
-    else {
-      try {
+      else {
+        console.log('🔍 Fetching stats for system view');
+        
         // System view - all orders
         const query = {
           createdAt: { $gte: startDate }
@@ -1030,24 +978,15 @@ exports.getOrderStats = async (req, res) => {
         ]);
 
         if (aggregation.length > 0) {
-          const result = aggregation[0];
-          stats.totalOrders = result.totalOrders || 0;
-          stats.totalRevenue = result.totalRevenue || 0;
-          stats.pendingOrders = result.pendingOrders || 0;
-          stats.processingOrders = result.processingOrders || 0;
-          stats.deliveredOrders = result.deliveredOrders || 0;
-          stats.confirmedOrders = result.confirmedOrders || 0;
-          stats.cancelledOrders = result.cancelledOrders || 0;
+          stats = aggregation[0];
+          stats.averageOrderValue = stats.totalOrders > 0 ? 
+            stats.totalRevenue / stats.totalOrders : 0;
         }
-      } catch (error) {
-        console.error('Error in system stats:', error);
-        // Return zero stats on error
       }
+    } catch (statsError) {
+      console.error('❌ Error in stats calculation:', statsError);
+      // Continue with zero stats - don't crash the entire request
     }
-
-    // Calculate average order value
-    stats.averageOrderValue = stats.totalOrders > 0 ? 
-      stats.totalRevenue / stats.totalOrders : 0;
 
     // Ensure all values are numbers
     stats.totalOrders = Number(stats.totalOrders) || 0;
@@ -1059,6 +998,8 @@ exports.getOrderStats = async (req, res) => {
     stats.cancelledOrders = Number(stats.cancelledOrders) || 0;
     stats.averageOrderValue = Number(stats.averageOrderValue) || 0;
 
+    console.log(`✅ Final stats:`, stats);
+
     res.json({
       success: true,
       period,
@@ -1066,7 +1007,7 @@ exports.getOrderStats = async (req, res) => {
       stats,
       filterInfo: {
         isFiltered: view !== 'system',
-        userId: req.user._id,
+        userId: userId,
         viewType: view
       }
     });
@@ -1238,7 +1179,7 @@ exports.updateOrderStatus = async (req, res) => {
     }
     
     if (req.user.role === 'admin') {
-      const adminProductIds = await getAdminProductIds(req.user._id);
+      const adminProductIds = await getAdminProductIds(req.user.id);
       const orderProductIds = order.items.map(item => item.product.toString());
       const ownsProducts = orderProductIds.some(productId => 
         adminProductIds.some(adminProductId => adminProductId.toString() === productId)
@@ -1413,7 +1354,7 @@ exports.processOrder = async (req, res) => {
       });
     }
     
-    const adminProductIds = await getAdminProductIds(req.user._id);
+    const adminProductIds = await getAdminProductIds(req.user.id);
     const orderProductIds = order.items.map(item => item.product.toString());
     const ownsProducts = orderProductIds.some(productId => 
       adminProductIds.some(adminProductId => adminProductId.toString() === productId)
@@ -1501,7 +1442,7 @@ exports.deliverOrder = async (req, res) => {
       });
     }
     
-    const adminProductIds = await getAdminProductIds(req.user._id);
+    const adminProductIds = await getAdminProductIds(req.user.id);
     const orderProductIds = order.items.map(item => item.product.toString());
     const ownsProducts = orderProductIds.some(productId => 
       adminProductIds.some(adminProductId => adminProductId.toString() === productId)
@@ -1591,7 +1532,7 @@ exports.rejectOrder = async (req, res) => {
       });
     }
     
-    const adminProductIds = await getAdminProductIds(req.user._id);
+    const adminProductIds = await getAdminProductIds(req.user.id);
     const orderProductIds = order.items.map(item => item.product.toString());
     const ownsProducts = orderProductIds.some(productId => 
       adminProductIds.some(adminProductId => adminProductId.toString() === productId)
@@ -1752,7 +1693,7 @@ exports.debugUser = async (req, res) => {
     res.json({
       success: true,
       user: req.user,
-      userId: req.user ? req.user._id : null,
+      userId: req.user ? req.user.id : null,
       userRole: req.user ? req.user.role : null,
       timestamp: new Date().toISOString()
     });
