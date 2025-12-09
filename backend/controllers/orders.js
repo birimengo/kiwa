@@ -32,7 +32,7 @@ const generateOrderNumber = async () => {
   return `ORD-${year}${month}${day}-${String(sequence).padStart(4, '0')}`;
 };
 
-// Helper function to create notification for admins
+// Helper function to create notification
 async function createOrderNotification(order, type = 'new_order', note = '', targetUserId = null) {
   try {
     const User = require('../models/User');
@@ -45,10 +45,7 @@ async function createOrderNotification(order, type = 'new_order', note = '', tar
       usersToNotify = adminUsers;
     }
     
-    if (usersToNotify.length === 0) {
-      console.log('⚠️ No users to notify');
-      return;
-    }
+    if (usersToNotify.length === 0) return;
     
     let message = '';
     switch(type) {
@@ -71,9 +68,7 @@ async function createOrderNotification(order, type = 'new_order', note = '', tar
         message = `Order #${order.orderNumber} has been updated`;
     }
     
-    if (note) {
-      message += `: ${note}`;
-    }
+    if (note) message += `: ${note}`;
     
     const notificationPromises = usersToNotify.map(user => {
       return Notification.create({
@@ -88,7 +83,6 @@ async function createOrderNotification(order, type = 'new_order', note = '', tar
     });
     
     await Promise.all(notificationPromises);
-    console.log(`📢 Notifications created for order ${order.orderNumber} to ${usersToNotify.length} user(s)`);
   } catch (error) {
     console.error('❌ Error creating notification:', error);
   }
@@ -96,8 +90,6 @@ async function createOrderNotification(order, type = 'new_order', note = '', tar
 
 // Helper function to create sale from confirmed order
 async function createSaleFromOrder(order, userId, session = null) {
-  console.log(`💰 Creating sale from confirmed order: ${order.orderNumber}`);
-  
   try {
     const saleItems = await Promise.all(
       order.items.map(async (item) => {
@@ -156,9 +148,7 @@ async function createSaleFromOrder(order, userId, session = null) {
       await sale.save();
     }
     
-    console.log(`✅ Sale created: ${sale.saleNumber} from order: ${order.orderNumber}`);
     return sale;
-    
   } catch (error) {
     console.error('❌ Error creating sale from order:', error);
     throw error;
@@ -191,10 +181,8 @@ async function generateSaleNumber() {
   return `SALE-${year}${month}${day}-${String(sequence).padStart(4, '0')}`;
 }
 
-// Helper function to restore stock when order is cancelled
+// Helper function to restore stock
 async function restoreOrderStock(order, userId, session = null) {
-  console.log(`🔄 Restoring stock for cancelled order ${order.orderNumber}`);
-  
   for (const item of order.items) {
     const product = await Product.findById(item.product);
     if (product) {
@@ -220,8 +208,6 @@ async function restoreOrderStock(order, userId, session = null) {
       } else {
         await product.save();
       }
-      
-      console.log(`📦 Restored ${item.quantity} units of ${product.name}`);
     }
   }
 }
@@ -238,9 +224,7 @@ function calculateShippingFee(items, location) {
     location.toLowerCase().includes(area)
   );
   
-  if (isRemote) {
-    locationFee = 3000;
-  }
+  if (isRemote) locationFee = 3000;
   
   return baseFee + (perItemFee * totalItems) + locationFee;
 }
@@ -253,34 +237,27 @@ function calculateTaxAmount(subtotal) {
 
 // Helper function to get admin's product IDs
 async function getAdminProductIds(adminId) {
-  const adminProducts = await Product.find({ createdBy: adminId }).select('_id');
-  return adminProducts.map(p => p._id);
+  try {
+    const adminProducts = await Product.find({ createdBy: adminId }).select('_id');
+    return adminProducts.map(p => p._id);
+  } catch (error) {
+    console.error('❌ Error getting admin product IDs:', error);
+    return [];
+  }
 }
 
-// Helper function to filter orders by product ownership
-async function filterOrdersByProductOwnership(orders, adminId) {
-  const adminProductIds = await getAdminProductIds(adminId);
-  
-  return orders.map(order => {
-    const ownedItems = order.items.filter(item => {
-      if (!item.product || !item.product._id) return false;
-      return adminProductIds.some(productId => 
-        productId.toString() === item.product._id.toString()
-      );
-    });
-    
-    if (ownedItems.length === 0) return null;
-    
-    const subtotal = ownedItems.reduce((sum, item) => sum + item.totalPrice, 0);
-    const totalAmount = subtotal + (order.shippingFee || 0) + (order.taxAmount || 0) - (order.discountAmount || 0);
-    
-    return {
-      ...order,
-      items: ownedItems,
-      subtotal,
-      totalAmount
-    };
-  }).filter(order => order !== null);
+// Helper function to get zero stats object
+function getZeroStats() {
+  return {
+    totalOrders: 0,
+    totalRevenue: 0,
+    pendingOrders: 0,
+    processingOrders: 0,
+    deliveredOrders: 0,
+    confirmedOrders: 0,
+    cancelledOrders: 0,
+    averageOrderValue: 0
+  };
 }
 
 // ==================== MAIN CONTROLLER FUNCTIONS ====================
@@ -289,26 +266,14 @@ async function filterOrdersByProductOwnership(orders, adminId) {
 // @route   POST /api/orders
 // @access  Private
 exports.createOrder = async (req, res) => {
-  console.log('🛒 Starting order creation process...');
-  console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-  
   const session = await mongoose.startSession();
   
   try {
-    console.log('🔄 Starting database transaction...');
     await session.startTransaction();
     
     const { items, paymentMethod, customerInfo, notes, shippingAddress } = req.body;
 
-    console.log('🛒 Creating new order with data:', { 
-      itemsCount: items?.length,
-      customerName: customerInfo?.name,
-      paymentMethod,
-      userId: req.user.id
-    });
-
     if (!items || !Array.isArray(items) || items.length === 0) {
-      console.error('❌ No items in order');
       await session.abortTransaction();
       await session.endSession();
       return res.status(400).json({
@@ -318,7 +283,6 @@ exports.createOrder = async (req, res) => {
     }
 
     if (!customerInfo || !customerInfo.name || !customerInfo.phone || !customerInfo.location) {
-      console.error('❌ Missing customer information');
       await session.abortTransaction();
       await session.endSession();
       return res.status(400).json({
@@ -331,8 +295,6 @@ exports.createOrder = async (req, res) => {
     let subtotal = 0;
 
     for (const cartItem of items) {
-      console.log('📦 Processing cart item:', cartItem);
-      
       let productId;
       if (typeof cartItem.product === 'string') {
         productId = cartItem.product;
@@ -341,7 +303,6 @@ exports.createOrder = async (req, res) => {
       } else if (cartItem.product && cartItem.product.id) {
         productId = cartItem.product.id;
       } else {
-        console.error('❌ Invalid product ID structure:', cartItem);
         await session.abortTransaction();
         await session.endSession();
         return res.status(400).json({
@@ -351,7 +312,6 @@ exports.createOrder = async (req, res) => {
       }
 
       if (!mongoose.Types.ObjectId.isValid(productId)) {
-        console.error('❌ Invalid product ID format:', productId);
         await session.abortTransaction();
         await session.endSession();
         return res.status(400).json({
@@ -360,11 +320,9 @@ exports.createOrder = async (req, res) => {
         });
       }
 
-      console.log('🔍 Looking for product with ID:', productId);
       const product = await Product.findById(productId).session(session);
       
       if (!product) {
-        console.error('❌ Product not found with ID:', productId);
         await session.abortTransaction();
         await session.endSession();
         return res.status(404).json({
@@ -373,10 +331,7 @@ exports.createOrder = async (req, res) => {
         });
       }
 
-      console.log('✅ Found product:', product.name);
-
       if (!product.isActive) {
-        console.error('❌ Product not active:', product.name);
         await session.abortTransaction();
         await session.endSession();
         return res.status(400).json({
@@ -386,7 +341,6 @@ exports.createOrder = async (req, res) => {
       }
 
       if (product.stock < cartItem.quantity) {
-        console.error(`❌ Insufficient stock for ${product.name}: ${product.stock} < ${cartItem.quantity}`);
         await session.abortTransaction();
         await session.endSession();
         return res.status(400).json({
@@ -413,8 +367,6 @@ exports.createOrder = async (req, res) => {
       const previousStock = product.stock;
       const newStock = previousStock - cartItem.quantity;
       
-      console.log(`📊 Updating stock for ${product.name}: ${previousStock} -> ${newStock}`);
-      
       product.stock = newStock;
       product.totalSold += cartItem.quantity;
       
@@ -426,7 +378,7 @@ exports.createOrder = async (req, res) => {
         reference: null,
         referenceModel: 'Order',
         user: req.user.id,
-        notes: `Order: ${cartItem.quantity} units sold by user ${req.user.name}`
+        notes: `Order: ${cartItem.quantity} units sold`
       });
 
       await product.save({ session });
@@ -435,12 +387,7 @@ exports.createOrder = async (req, res) => {
     const shippingFee = calculateShippingFee(orderItems, customerInfo.location);
     const taxAmount = calculateTaxAmount(subtotal);
     const totalAmount = subtotal + shippingFee + taxAmount;
-
-    console.log('💰 Order totals:', { subtotal, shippingFee, taxAmount, totalAmount });
-
     const orderNumber = await generateOrderNumber();
-    
-    console.log('📝 Creating order document...');
     
     const order = new Order({
       orderNumber,
@@ -468,7 +415,6 @@ exports.createOrder = async (req, res) => {
 
     await order.save({ session });
 
-    console.log('🔄 Updating stock history with order references...');
     for (const item of order.items) {
       const product = await Product.findById(item.product).session(session);
       if (product && product.stockHistory.length > 0) {
@@ -480,11 +426,8 @@ exports.createOrder = async (req, res) => {
 
     await createOrderNotification(order, 'new_order');
 
-    console.log('✅ Committing transaction...');
     await session.commitTransaction();
     await session.endSession();
-    
-    console.log(`✅ Order created successfully: ${orderNumber} by user ${req.user.name}`);
 
     const populatedOrder = await Order.findById(order._id)
       .populate('customer.user', 'name email')
@@ -516,7 +459,6 @@ exports.createOrder = async (req, res) => {
     if (session) {
       try {
         if (session.inTransaction()) {
-          console.log('🔄 Aborting transaction due to error...');
           await session.abortTransaction();
         }
         await session.endSession();
@@ -540,9 +482,6 @@ exports.getMyOrders = async (req, res) => {
   try {
     const { page = 1, limit = 10, status } = req.query;
     
-    console.log('📋 Fetching user orders...');
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    
     let query = { 'customer.user': req.user.id };
     
     if (status && status !== 'all') {
@@ -559,8 +498,6 @@ exports.getMyOrders = async (req, res) => {
       .lean();
     
     const total = await Order.countDocuments(query);
-    
-    console.log(`📋 Fetched ${orders.length} orders for user ${req.user.name}`);
     
     res.json({
       success: true,
@@ -594,9 +531,6 @@ exports.getMyOrders = async (req, res) => {
 // @access  Private
 exports.getOrder = async (req, res) => {
   try {
-    console.log('📦 Fetching single order:', req.params.id);
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    
     const order = await Order.findById(req.params.id)
       .populate('customer.user', 'name email phone')
       .populate({
@@ -660,8 +594,6 @@ exports.getOrder = async (req, res) => {
       });
     }
     
-    console.log(`📦 Fetched order ${order.orderNumber} with ${filteredOrder.items.length} items`);
-    
     res.json({
       success: true,
       order: filteredOrder,
@@ -694,10 +626,6 @@ exports.getAllOrders = async (req, res) => {
   try {
     const { page = 1, limit = 10, status, startDate, endDate, view = 'system' } = req.query;
     
-    console.log('📋 Fetching all orders...');
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    console.log('👀 View mode:', view);
-    
     let query = {};
     
     if (status && status !== 'all') {
@@ -708,10 +636,6 @@ exports.getAllOrders = async (req, res) => {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
       if (endDate) query.createdAt.$lte = new Date(endDate);
-    }
-    
-    if (view === 'system') {
-      console.log('🔍 Admin system view - showing all orders');
     }
     
     const skip = (page - 1) * limit;
@@ -735,8 +659,6 @@ exports.getAllOrders = async (req, res) => {
       .lean();
     
     const total = await Order.countDocuments(query);
-    
-    console.log(`📋 Admin fetched ${orders.length} orders`);
     
     res.json({
       success: true,
@@ -772,9 +694,6 @@ exports.getAdminProcessedOrders = async (req, res) => {
   try {
     const { page = 1, limit = 10, status, startDate, endDate } = req.query;
     
-    console.log('📋 Fetching admin processed orders...');
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    
     let query = { processedBy: req.user._id };
     
     if (status && status !== 'all') {
@@ -808,8 +727,6 @@ exports.getAdminProcessedOrders = async (req, res) => {
       .lean();
     
     const total = await Order.countDocuments(query);
-    
-    console.log(`📋 Admin fetched ${orders.length} orders processed by them`);
     
     res.json({
       success: true,
@@ -845,16 +762,9 @@ exports.getAdminProductOrders = async (req, res) => {
   try {
     const { page = 1, limit = 10, status, startDate, endDate } = req.query;
     
-    console.log('📋 Fetching admin product-specific orders...');
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    
     const adminProductIds = await getAdminProductIds(req.user._id);
     
-    let query = {};
-    
-    if (adminProductIds.length > 0) {
-      query['items.product'] = { $in: adminProductIds };
-    } else {
+    if (adminProductIds.length === 0) {
       return res.json({
         success: true,
         count: 0,
@@ -873,6 +783,8 @@ exports.getAdminProductOrders = async (req, res) => {
         }
       });
     }
+    
+    let query = { 'items.product': { $in: adminProductIds } };
     
     if (status && status !== 'all') {
       query.orderStatus = status;
@@ -904,11 +816,29 @@ exports.getAdminProductOrders = async (req, res) => {
       .limit(parseInt(limit))
       .lean();
     
-    const filteredOrders = await filterOrdersByProductOwnership(orders, req.user._id);
+    // Filter items within each order to only show admin's products
+    const filteredOrders = orders.map(order => {
+      const ownedItems = order.items.filter(item => {
+        if (!item.product || !item.product._id) return false;
+        return adminProductIds.some(productId => 
+          productId.toString() === item.product._id.toString()
+        );
+      });
+      
+      if (ownedItems.length === 0) return null;
+      
+      const subtotal = ownedItems.reduce((sum, item) => sum + item.totalPrice, 0);
+      const totalAmount = subtotal + (order.shippingFee || 0) + (order.taxAmount || 0) - (order.discountAmount || 0);
+      
+      return {
+        ...order,
+        items: ownedItems,
+        subtotal,
+        totalAmount
+      };
+    }).filter(order => order !== null);
     
-    const total = await Order.countDocuments(query);
-    
-    console.log(`📋 Admin sees ${filteredOrders.length} orders with their ${adminProductIds.length} products`);
+    const total = filteredOrders.length;
     
     res.json({
       success: true,
@@ -938,597 +868,22 @@ exports.getAdminProductOrders = async (req, res) => {
   }
 };
 
-// @desc    Update order status (Admin only)
-// @route   PUT /api/orders/:id/status
-// @access  Private/Admin
-exports.updateOrderStatus = async (req, res) => {
-  const session = await mongoose.startSession();
-  
-  try {
-    console.log('🔄 Updating order status:', req.params.id);
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    
-    await session.startTransaction();
-    const { orderStatus, note } = req.body;
-    
-    const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
-    
-    if (!validStatuses.includes(orderStatus)) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid order status'
-      });
-    }
-    
-    const order = await Order.findById(req.params.id).session(session);
-    
-    if (!order) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-    
-    if (req.user.role === 'admin') {
-      const adminProductIds = await getAdminProductIds(req.user._id);
-      const orderProductIds = order.items.map(item => item.product.toString());
-      const ownsProducts = orderProductIds.some(productId => 
-        adminProductIds.some(adminProductId => adminProductId.toString() === productId)
-      );
-      
-      if (!ownsProducts && order.processedBy?.toString() !== req.user.id) {
-        await session.abortTransaction();
-        await session.endSession();
-        return res.status(403).json({
-          success: false,
-          message: 'Not authorized to update this order'
-        });
-      }
-    }
-    
-    const previousStatus = order.orderStatus;
-    order.orderStatus = orderStatus;
-    
-    order.statusHistory.push({
-      status: orderStatus,
-      note: note || `Status changed from ${previousStatus} to ${orderStatus} by ${req.user.name}`,
-      changedBy: req.user.id
-    });
-    
-    if (orderStatus === 'delivered') {
-      order.deliveredAt = new Date();
-      order.deliveredBy = req.user.id;
-      await createOrderNotification(order, 'delivered', note);
-    } else if (orderStatus === 'cancelled') {
-      order.cancelledAt = new Date();
-      order.cancellationReason = note || 'Order cancelled by admin';
-      await createOrderNotification(order, 'cancelled', order.cancellationReason);
-      await restoreOrderStock(order, req.user.id, session);
-    } else if (orderStatus === 'processing') {
-      order.processedBy = req.user.id;
-      await createOrderNotification(order, 'processing', note);
-    }
-    
-    await order.save({ session });
-    await session.commitTransaction();
-    await session.endSession();
-    
-    console.log(`🔄 Order ${order.orderNumber} status updated: ${previousStatus} -> ${orderStatus} by ${req.user.name}`);
-    
-    res.json({
-      success: true,
-      message: 'Order status updated successfully',
-      order,
-      updatedBy: req.user.name
-    });
-    
-  } catch (error) {
-    console.error('❌ Update order status error:', error);
-    
-    if (session) {
-      try {
-        if (session.inTransaction()) {
-          await session.abortTransaction();
-        }
-        await session.endSession();
-      } catch (cleanupError) {
-        console.error('❌ Error during session cleanup:', cleanupError);
-      }
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Server error while updating order status',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Cancel order (User)
-// @route   PUT /api/orders/:id/cancel
-// @access  Private
-exports.cancelOrder = async (req, res) => {
-  const session = await mongoose.startSession();
-  
-  try {
-    console.log('❌ Cancelling order:', req.params.id);
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    
-    await session.startTransaction();
-    const { reason } = req.body;
-    
-    const order = await Order.findById(req.params.id).session(session);
-    
-    if (!order) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-    
-    if (order.customer.user.toString() !== req.user.id) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to cancel this order'
-      });
-    }
-    
-    if (order.orderStatus !== 'pending') {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Order cannot be cancelled at this stage'
-      });
-    }
-    
-    const previousStatus = order.orderStatus;
-    order.orderStatus = 'cancelled';
-    order.cancelledAt = new Date();
-    order.cancellationReason = reason || 'Cancelled by customer';
-    
-    order.statusHistory.push({
-      status: 'cancelled',
-      note: `Order cancelled by user ${req.user.name}. Reason: ${reason || 'Not specified'}`,
-      changedBy: req.user.id
-    });
-    
-    await createOrderNotification(order, 'cancelled', order.cancellationReason);
-    await restoreOrderStock(order, req.user.id, session);
-    
-    await order.save({ session });
-    await session.commitTransaction();
-    await session.endSession();
-    
-    console.log(`❌ Order ${order.orderNumber} cancelled by user ${req.user.name}`);
-    
-    res.json({
-      success: true,
-      message: 'Order cancelled successfully',
-      order,
-      cancelledBy: req.user.name
-    });
-    
-  } catch (error) {
-    console.error('❌ Cancel order error:', error);
-    
-    if (session) {
-      try {
-        if (session.inTransaction()) {
-          await session.abortTransaction();
-        }
-        await session.endSession();
-      } catch (cleanupError) {
-        console.error('❌ Error during session cleanup:', cleanupError);
-      }
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Server error while cancelling order',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Process order (Admin)
-// @route   PUT /api/orders/:id/process
-// @access  Private/Admin
-exports.processOrder = async (req, res) => {
-  const session = await mongoose.startSession();
-  
-  try {
-    console.log('🔄 Processing order:', req.params.id);
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    
-    await session.startTransaction();
-    
-    const order = await Order.findById(req.params.id).session(session);
-    
-    if (!order) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-    
-    const adminProductIds = await getAdminProductIds(req.user._id);
-    const orderProductIds = order.items.map(item => item.product.toString());
-    const ownsProducts = orderProductIds.some(productId => 
-      adminProductIds.some(adminProductId => adminProductId.toString() === productId)
-    );
-    
-    if (!ownsProducts) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to process this order'
-      });
-    }
-    
-    if (order.orderStatus !== 'pending') {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Only pending orders can be processed'
-      });
-    }
-    
-    const previousStatus = order.orderStatus;
-    order.orderStatus = 'processing';
-    order.processedBy = req.user.id;
-    
-    order.statusHistory.push({
-      status: 'processing',
-      note: `Order processed by admin ${req.user.name} and moved to processing`,
-      changedBy: req.user.id
-    });
-    
-    await createOrderNotification(order, 'processing', null, req.user.id);
-    
-    await order.save({ session });
-    await session.commitTransaction();
-    await session.endSession();
-    
-    console.log(`🔄 Order ${order.orderNumber} processed by admin ${req.user.name}`);
-    
-    res.json({
-      success: true,
-      message: 'Order processed successfully',
-      order,
-      processedBy: req.user.name
-    });
-    
-  } catch (error) {
-    console.error('❌ Process order error:', error);
-    
-    if (session) {
-      try {
-        if (session.inTransaction()) {
-          await session.abortTransaction();
-        }
-        await session.endSession();
-      } catch (cleanupError) {
-        console.error('❌ Error during session cleanup:', cleanupError);
-      }
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Server error while processing order',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Deliver order (Admin)
-// @route   PUT /api/orders/:id/deliver
-// @access  Private/Admin
-exports.deliverOrder = async (req, res) => {
-  const session = await mongoose.startSession();
-  
-  try {
-    console.log('🚚 Delivering order:', req.params.id);
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    
-    await session.startTransaction();
-    
-    const order = await Order.findById(req.params.id).session(session);
-    
-    if (!order) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-    
-    const adminProductIds = await getAdminProductIds(req.user._id);
-    const orderProductIds = order.items.map(item => item.product.toString());
-    const ownsProducts = orderProductIds.some(productId => 
-      adminProductIds.some(adminProductId => adminProductId.toString() === productId)
-    );
-    
-    if (!ownsProducts && order.processedBy?.toString() !== req.user.id) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to deliver this order'
-      });
-    }
-    
-    if (order.orderStatus !== 'processing') {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Only processing orders can be delivered'
-      });
-    }
-    
-    const previousStatus = order.orderStatus;
-    order.orderStatus = 'delivered';
-    order.deliveredAt = new Date();
-    order.deliveredBy = req.user.id;
-    
-    order.statusHistory.push({
-      status: 'delivered',
-      note: `Order delivered by admin ${req.user.name}`,
-      changedBy: req.user.id
-    });
-    
-    await createOrderNotification(order, 'delivered', null, req.user.id);
-    
-    await order.save({ session });
-    await session.commitTransaction();
-    await session.endSession();
-    
-    console.log(`🚚 Order ${order.orderNumber} delivered by admin ${req.user.name}`);
-    
-    res.json({
-      success: true,
-      message: 'Order delivered successfully',
-      order,
-      deliveredBy: req.user.name
-    });
-    
-  } catch (error) {
-    console.error('❌ Deliver order error:', error);
-    
-    if (session) {
-      try {
-        if (session.inTransaction()) {
-          await session.abortTransaction();
-        }
-        await session.endSession();
-      } catch (cleanupError) {
-        console.error('❌ Error during session cleanup:', cleanupError);
-      }
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Server error while delivering order',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Reject order (Admin)
-// @route   PUT /api/orders/:id/reject
-// @access  Private/Admin
-exports.rejectOrder = async (req, res) => {
-  const session = await mongoose.startSession();
-  
-  try {
-    console.log('❌ Rejecting order:', req.params.id);
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    
-    await session.startTransaction();
-    const { reason } = req.body;
-    
-    const order = await Order.findById(req.params.id).session(session);
-    
-    if (!order) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-    
-    const adminProductIds = await getAdminProductIds(req.user._id);
-    const orderProductIds = order.items.map(item => item.product.toString());
-    const ownsProducts = orderProductIds.some(productId => 
-      adminProductIds.some(adminProductId => adminProductId.toString() === productId)
-    );
-    
-    if (!ownsProducts) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to reject this order'
-      });
-    }
-    
-    if (order.orderStatus !== 'pending') {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Only pending orders can be rejected'
-      });
-    }
-    
-    const previousStatus = order.orderStatus;
-    order.orderStatus = 'cancelled';
-    order.cancelledAt = new Date();
-    order.cancellationReason = reason || 'Rejected by admin';
-    
-    order.statusHistory.push({
-      status: 'cancelled',
-      note: `Order rejected by admin ${req.user.name}. Reason: ${reason || 'Not specified'}`,
-      changedBy: req.user.id
-    });
-    
-    await createOrderNotification(order, 'cancelled', order.cancellationReason, req.user.id);
-    await restoreOrderStock(order, req.user.id, session);
-    
-    await order.save({ session });
-    await session.commitTransaction();
-    await session.endSession();
-    
-    console.log(`❌ Order ${order.orderNumber} rejected by admin ${req.user.name}`);
-    
-    res.json({
-      success: true,
-      message: 'Order rejected successfully',
-      order,
-      rejectedBy: req.user.name
-    });
-    
-  } catch (error) {
-    console.error('❌ Reject order error:', error);
-    
-    if (session) {
-      try {
-        if (session.inTransaction()) {
-          await session.abortTransaction();
-        }
-        await session.endSession();
-      } catch (cleanupError) {
-        console.error('❌ Error during session cleanup:', cleanupError);
-      }
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Server error while rejecting order',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Confirm delivery receipt (User)
-// @route   PUT /api/orders/:id/confirm-delivery
-// @access  Private
-exports.confirmDelivery = async (req, res) => {
-  const session = await mongoose.startSession();
-  
-  try {
-    console.log('✅ Confirming delivery for order:', req.params.id);
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    
-    await session.startTransaction();
-    const { confirmationNote } = req.body;
-    
-    const order = await Order.findById(req.params.id).session(session);
-    
-    if (!order) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-    
-    if (order.customer.user.toString() !== req.user.id) {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to confirm this order'
-      });
-    }
-    
-    if (order.orderStatus !== 'delivered') {
-      await session.abortTransaction();
-      await session.endSession();
-      return res.status(400).json({
-        success: false,
-        message: 'Only delivered orders can be confirmed'
-      });
-    }
-    
-    const previousStatus = order.orderStatus;
-    order.orderStatus = 'confirmed';
-    order.confirmedAt = new Date();
-    order.confirmedBy = req.user.id;
-    
-    order.statusHistory.push({
-      status: 'confirmed',
-      note: `Delivery confirmed by customer ${req.user.name}. Note: ${confirmationNote || 'No note provided'}`,
-      changedBy: req.user.id
-    });
-    
-    await createOrderNotification(order, 'confirmed', confirmationNote, req.user.id);
-    
-    const sale = await createSaleFromOrder(order, req.user.id, session);
-    order.saleReference = sale._id;
-    
-    await order.save({ session });
-    await session.commitTransaction();
-    await session.endSession();
-    
-    console.log(`✅ Order ${order.orderNumber} delivery confirmed by user ${req.user.name}`);
-    
-    res.json({
-      success: true,
-      message: 'Delivery confirmed successfully',
-      order,
-      confirmedBy: req.user.name
-    });
-    
-  } catch (error) {
-    console.error('❌ Confirm delivery error:', error);
-    
-    if (session) {
-      try {
-        if (session.inTransaction()) {
-          await session.abortTransaction();
-        }
-        await session.endSession();
-      } catch (cleanupError) {
-        console.error('❌ Error during session cleanup:', cleanupError);
-      }
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: 'Server error while confirming delivery',
-      error: error.message
-    });
-  }
-};
-
-// @desc    Get order statistics - FIXED VERSION
+// @desc    Get order statistics - IMPROVED VERSION
 // @route   GET /api/orders/stats
 // @access  Private/Admin
 exports.getOrderStats = async (req, res) => {
   try {
     const { period = 'month', view = 'system' } = req.query;
     
-    console.log('📊 Fetching order statistics...');
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    console.log('👀 View mode:', view);
+    // Validate user authentication
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
     
+    // Calculate start date based on period
     let startDate = new Date();
     switch (period) {
       case 'today':
@@ -1547,106 +902,62 @@ exports.getOrderStats = async (req, res) => {
         startDate.setMonth(startDate.getMonth() - 1);
     }
     
-    // Build base query
-    let baseQuery = {
+    // Build base query with date filter
+    const baseQuery = {
       createdAt: { $gte: startDate }
     };
     
-    console.log(`🔍 Stats Query Parameters:`, { 
-      period,
-      view,
-      startDate,
-      userId: req.user._id
-    });
+    let finalQuery = { ...baseQuery };
+    let stats = {};
     
     // Handle different view modes
-    let finalQuery = { ...baseQuery };
-    
     if (view === 'my-processed') {
-      // Filter by processed orders
+      // Orders processed by this admin
       finalQuery.processedBy = req.user._id;
-      console.log('📊 Filtering by processedBy:', req.user._id);
+      stats = await getAggregatedStats(finalQuery);
     } 
     else if (view === 'my-products') {
-      // Get admin's product IDs
-      const adminProductIds = await getAdminProductIds(req.user._id);
-      
-      if (adminProductIds.length === 0) {
-        console.log('📊 No products found for admin, returning empty stats');
-        return res.json({
-          success: true,
-          period,
-          view,
-          stats: {
-            totalOrders: 0,
-            totalRevenue: 0,
-            pendingOrders: 0,
-            processingOrders: 0,
-            deliveredOrders: 0,
-            confirmedOrders: 0,
-            cancelledOrders: 0,
-            averageOrderValue: 0
-          },
-          filterInfo: {
-            isFiltered: true,
-            userId: req.user._id,
-            viewType: 'product-ownership',
-            productCount: 0
-          }
-        });
-      }
-      
-      // For product ownership, we need a different approach
-      console.log(`📊 Admin has ${adminProductIds.length} products, using special aggregation`);
-      
-      // Get all orders and filter in memory
-      const allOrders = await Order.find(baseQuery).lean();
-      
-      // Filter orders that contain admin's products
-      const filteredOrders = allOrders.filter(order => {
-        return order.items.some(item => {
-          return adminProductIds.some(productId => 
-            productId.toString() === item.product.toString()
-          );
-        });
-      });
-      
-      // Calculate stats manually
-      const stats = {
-        totalOrders: filteredOrders.length,
-        totalRevenue: filteredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0),
-        pendingOrders: filteredOrders.filter(o => o.orderStatus === 'pending').length,
-        processingOrders: filteredOrders.filter(o => o.orderStatus === 'processing').length,
-        deliveredOrders: filteredOrders.filter(o => o.orderStatus === 'delivered').length,
-        confirmedOrders: filteredOrders.filter(o => o.orderStatus === 'confirmed').length,
-        cancelledOrders: filteredOrders.filter(o => o.orderStatus === 'cancelled').length,
-        averageOrderValue: filteredOrders.length > 0 ? 
-          filteredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0) / filteredOrders.length : 0
-      };
-      
-      return res.json({
-        success: true,
-        period,
-        view,
-        stats,
-        filterInfo: {
-          isFiltered: true,
-          userId: req.user._id,
-          viewType: 'product-ownership',
-          productCount: adminProductIds.length
-        }
-      });
+      // Orders containing products created by this admin
+      stats = await getProductOwnershipStats(req.user._id, baseQuery);
     }
-    // For 'system' view, no additional filters needed
     else if (view === 'my') {
-      // Personal view for non-admin users
+      // Personal orders for regular users
       finalQuery['customer.user'] = req.user._id;
+      stats = await getAggregatedStats(finalQuery);
+    }
+    else {
+      // System view - all orders
+      stats = await getAggregatedStats(finalQuery);
     }
     
-    // For system and my-processed views, use aggregation
+    res.json({
+      success: true,
+      period,
+      view,
+      stats,
+      filterInfo: {
+        isFiltered: view !== 'system',
+        userId: req.user._id,
+        viewType: view
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Get order stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching order statistics',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Helper function for aggregated stats
+async function getAggregatedStats(query) {
+  try {
     const stats = await Order.aggregate([
       {
-        $match: finalQuery
+        $match: query
       },
       {
         $group: {
@@ -1673,60 +984,107 @@ exports.getOrderStats = async (req, res) => {
       }
     ]);
     
-    const result = stats[0] || {
-      totalOrders: 0,
-      totalRevenue: 0,
-      pendingOrders: 0,
-      processingOrders: 0,
-      deliveredOrders: 0,
-      confirmedOrders: 0,
-      cancelledOrders: 0,
-      averageOrderValue: 0
-    };
+    const result = stats[0] || getZeroStats();
     
-    res.json({
-      success: true,
-      period,
-      view,
-      stats: result,
-      filterInfo: {
-        isFiltered: view !== 'system',
-        userId: req.user._id,
-        viewType: view
-      }
-    });
+    // Ensure averageOrderValue is a number
+    result.averageOrderValue = result.averageOrderValue || 0;
     
+    return result;
   } catch (error) {
-    console.error('❌ Get order stats error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching order statistics',
-      error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    console.error('❌ Error in getAggregatedStats:', error);
+    return getZeroStats();
   }
-};
+}
+
+// Helper function for product ownership stats
+async function getProductOwnershipStats(adminId, baseQuery) {
+  try {
+    const adminProductIds = await getAdminProductIds(adminId);
+    
+    if (adminProductIds.length === 0) {
+      return getZeroStats();
+    }
+    
+    const stats = await Order.aggregate([
+      {
+        $match: baseQuery
+      },
+      {
+        $addFields: {
+          hasAdminProducts: {
+            $gt: [
+              {
+                $size: {
+                  $filter: {
+                    input: "$items.product",
+                    as: "productId",
+                    cond: {
+                      $in: ["$$productId", adminProductIds]
+                    }
+                  }
+                }
+              },
+              0
+            ]
+          }
+        }
+      },
+      {
+        $match: {
+          hasAdminProducts: true
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalOrders: { $sum: 1 },
+          totalRevenue: { $sum: '$totalAmount' },
+          pendingOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'pending'] }, 1, 0] }
+          },
+          processingOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'processing'] }, 1, 0] }
+          },
+          deliveredOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
+          },
+          confirmedOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'confirmed'] }, 1, 0] }
+          },
+          cancelledOrders: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
+          },
+          averageOrderValue: { $avg: '$totalAmount' }
+        }
+      }
+    ]);
+    
+    const result = stats[0] || getZeroStats();
+    
+    // Ensure averageOrderValue is a number
+    result.averageOrderValue = result.averageOrderValue || 0;
+    
+    return result;
+  } catch (error) {
+    console.error('❌ Error in getProductOwnershipStats:', error);
+    return getZeroStats();
+  }
+}
 
 // @desc    Get dashboard statistics
 // @route   GET /api/orders/dashboard/stats
 // @access  Private/Admin
 exports.getDashboardStats = async (req, res) => {
   try {
-    console.log('📊 Fetching dashboard statistics...');
-    console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
-    
     // Build queries
-    let todayQuery = {};
-    let weekQuery = {};
-    let overallQuery = {};
-    
-    // Today's stats
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
     
-    todayQuery.createdAt = { $gte: todayStart, $lte: todayEnd };
+    const todayQuery = {
+      createdAt: { $gte: todayStart, $lte: todayEnd }
+    };
 
     const todayStats = await Order.aggregate([
       {
@@ -1741,11 +1099,12 @@ exports.getDashboardStats = async (req, res) => {
       }
     ]);
 
-    // This week's stats
     const weekStart = new Date();
     weekStart.setDate(weekStart.getDate() - 7);
     
-    weekQuery.createdAt = { $gte: weekStart };
+    const weekQuery = {
+      createdAt: { $gte: weekStart }
+    };
 
     const weekStats = await Order.aggregate([
       {
@@ -1760,11 +1119,7 @@ exports.getDashboardStats = async (req, res) => {
       }
     ]);
 
-    // Overall stats
     const overallStats = await Order.aggregate([
-      {
-        $match: overallQuery
-      },
       {
         $group: {
           _id: null,
@@ -1821,6 +1176,551 @@ exports.getDashboardStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while fetching dashboard statistics',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Update order status
+// @route   PUT /api/orders/:id/status
+// @access  Private/Admin
+exports.updateOrderStatus = async (req, res) => {
+  const session = await mongoose.startSession();
+  
+  try {
+    await session.startTransaction();
+    const { orderStatus, note } = req.body;
+    
+    const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
+    
+    if (!validStatuses.includes(orderStatus)) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid order status'
+      });
+    }
+    
+    const order = await Order.findById(req.params.id).session(session);
+    
+    if (!order) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+    
+    if (req.user.role === 'admin') {
+      const adminProductIds = await getAdminProductIds(req.user._id);
+      const orderProductIds = order.items.map(item => item.product.toString());
+      const ownsProducts = orderProductIds.some(productId => 
+        adminProductIds.some(adminProductId => adminProductId.toString() === productId)
+      );
+      
+      if (!ownsProducts && order.processedBy?.toString() !== req.user.id) {
+        await session.abortTransaction();
+        await session.endSession();
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to update this order'
+        });
+      }
+    }
+    
+    const previousStatus = order.orderStatus;
+    order.orderStatus = orderStatus;
+    
+    order.statusHistory.push({
+      status: orderStatus,
+      note: note || `Status changed from ${previousStatus} to ${orderStatus}`,
+      changedBy: req.user.id
+    });
+    
+    if (orderStatus === 'delivered') {
+      order.deliveredAt = new Date();
+      order.deliveredBy = req.user.id;
+      await createOrderNotification(order, 'delivered', note);
+    } else if (orderStatus === 'cancelled') {
+      order.cancelledAt = new Date();
+      order.cancellationReason = note || 'Order cancelled by admin';
+      await createOrderNotification(order, 'cancelled', order.cancellationReason);
+      await restoreOrderStock(order, req.user.id, session);
+    } else if (orderStatus === 'processing') {
+      order.processedBy = req.user.id;
+      await createOrderNotification(order, 'processing', note);
+    }
+    
+    await order.save({ session });
+    await session.commitTransaction();
+    await session.endSession();
+    
+    res.json({
+      success: true,
+      message: 'Order status updated successfully',
+      order,
+      updatedBy: req.user.name
+    });
+    
+  } catch (error) {
+    console.error('❌ Update order status error:', error);
+    
+    if (session) {
+      try {
+        if (session.inTransaction()) {
+          await session.abortTransaction();
+        }
+        await session.endSession();
+      } catch (cleanupError) {
+        console.error('❌ Error during session cleanup:', cleanupError);
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating order status',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Cancel order (User)
+// @route   PUT /api/orders/:id/cancel
+// @access  Private
+exports.cancelOrder = async (req, res) => {
+  const session = await mongoose.startSession();
+  
+  try {
+    await session.startTransaction();
+    const { reason } = req.body;
+    
+    const order = await Order.findById(req.params.id).session(session);
+    
+    if (!order) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+    
+    if (order.customer.user.toString() !== req.user.id) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to cancel this order'
+      });
+    }
+    
+    if (order.orderStatus !== 'pending') {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(400).json({
+        success: false,
+        message: 'Order cannot be cancelled at this stage'
+      });
+    }
+    
+    order.orderStatus = 'cancelled';
+    order.cancelledAt = new Date();
+    order.cancellationReason = reason || 'Cancelled by customer';
+    
+    order.statusHistory.push({
+      status: 'cancelled',
+      note: `Order cancelled by user. Reason: ${reason || 'Not specified'}`,
+      changedBy: req.user.id
+    });
+    
+    await createOrderNotification(order, 'cancelled', order.cancellationReason);
+    await restoreOrderStock(order, req.user.id, session);
+    
+    await order.save({ session });
+    await session.commitTransaction();
+    await session.endSession();
+    
+    res.json({
+      success: true,
+      message: 'Order cancelled successfully',
+      order,
+      cancelledBy: req.user.name
+    });
+    
+  } catch (error) {
+    console.error('❌ Cancel order error:', error);
+    
+    if (session) {
+      try {
+        if (session.inTransaction()) {
+          await session.abortTransaction();
+        }
+        await session.endSession();
+      } catch (cleanupError) {
+        console.error('❌ Error during session cleanup:', cleanupError);
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error while cancelling order',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Process order (Admin)
+// @route   PUT /api/orders/:id/process
+// @access  Private/Admin
+exports.processOrder = async (req, res) => {
+  const session = await mongoose.startSession();
+  
+  try {
+    await session.startTransaction();
+    
+    const order = await Order.findById(req.params.id).session(session);
+    
+    if (!order) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+    
+    const adminProductIds = await getAdminProductIds(req.user._id);
+    const orderProductIds = order.items.map(item => item.product.toString());
+    const ownsProducts = orderProductIds.some(productId => 
+      adminProductIds.some(adminProductId => adminProductId.toString() === productId)
+    );
+    
+    if (!ownsProducts) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to process this order'
+      });
+    }
+    
+    if (order.orderStatus !== 'pending') {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(400).json({
+        success: false,
+        message: 'Only pending orders can be processed'
+      });
+    }
+    
+    order.orderStatus = 'processing';
+    order.processedBy = req.user.id;
+    
+    order.statusHistory.push({
+      status: 'processing',
+      note: `Order processed and moved to processing`,
+      changedBy: req.user.id
+    });
+    
+    await createOrderNotification(order, 'processing', null, req.user.id);
+    
+    await order.save({ session });
+    await session.commitTransaction();
+    await session.endSession();
+    
+    res.json({
+      success: true,
+      message: 'Order processed successfully',
+      order,
+      processedBy: req.user.name
+    });
+    
+  } catch (error) {
+    console.error('❌ Process order error:', error);
+    
+    if (session) {
+      try {
+        if (session.inTransaction()) {
+          await session.abortTransaction();
+        }
+        await session.endSession();
+      } catch (cleanupError) {
+        console.error('❌ Error during session cleanup:', cleanupError);
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error while processing order',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Deliver order (Admin)
+// @route   PUT /api/orders/:id/deliver
+// @access  Private/Admin
+exports.deliverOrder = async (req, res) => {
+  const session = await mongoose.startSession();
+  
+  try {
+    await session.startTransaction();
+    
+    const order = await Order.findById(req.params.id).session(session);
+    
+    if (!order) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+    
+    const adminProductIds = await getAdminProductIds(req.user._id);
+    const orderProductIds = order.items.map(item => item.product.toString());
+    const ownsProducts = orderProductIds.some(productId => 
+      adminProductIds.some(adminProductId => adminProductId.toString() === productId)
+    );
+    
+    if (!ownsProducts && order.processedBy?.toString() !== req.user.id) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to deliver this order'
+      });
+    }
+    
+    if (order.orderStatus !== 'processing') {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(400).json({
+        success: false,
+        message: 'Only processing orders can be delivered'
+      });
+    }
+    
+    order.orderStatus = 'delivered';
+    order.deliveredAt = new Date();
+    order.deliveredBy = req.user.id;
+    
+    order.statusHistory.push({
+      status: 'delivered',
+      note: `Order delivered`,
+      changedBy: req.user.id
+    });
+    
+    await createOrderNotification(order, 'delivered', null, req.user.id);
+    
+    await order.save({ session });
+    await session.commitTransaction();
+    await session.endSession();
+    
+    res.json({
+      success: true,
+      message: 'Order delivered successfully',
+      order,
+      deliveredBy: req.user.name
+    });
+    
+  } catch (error) {
+    console.error('❌ Deliver order error:', error);
+    
+    if (session) {
+      try {
+        if (session.inTransaction()) {
+          await session.abortTransaction();
+        }
+        await session.endSession();
+      } catch (cleanupError) {
+        console.error('❌ Error during session cleanup:', cleanupError);
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error while delivering order',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Reject order (Admin)
+// @route   PUT /api/orders/:id/reject
+// @access  Private/Admin
+exports.rejectOrder = async (req, res) => {
+  const session = await mongoose.startSession();
+  
+  try {
+    await session.startTransaction();
+    const { reason } = req.body;
+    
+    const order = await Order.findById(req.params.id).session(session);
+    
+    if (!order) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+    
+    const adminProductIds = await getAdminProductIds(req.user._id);
+    const orderProductIds = order.items.map(item => item.product.toString());
+    const ownsProducts = orderProductIds.some(productId => 
+      adminProductIds.some(adminProductId => adminProductId.toString() === productId)
+    );
+    
+    if (!ownsProducts) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to reject this order'
+      });
+    }
+    
+    if (order.orderStatus !== 'pending') {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(400).json({
+        success: false,
+        message: 'Only pending orders can be rejected'
+      });
+    }
+    
+    order.orderStatus = 'cancelled';
+    order.cancelledAt = new Date();
+    order.cancellationReason = reason || 'Rejected by admin';
+    
+    order.statusHistory.push({
+      status: 'cancelled',
+      note: `Order rejected. Reason: ${reason || 'Not specified'}`,
+      changedBy: req.user.id
+    });
+    
+    await createOrderNotification(order, 'cancelled', order.cancellationReason, req.user.id);
+    await restoreOrderStock(order, req.user.id, session);
+    
+    await order.save({ session });
+    await session.commitTransaction();
+    await session.endSession();
+    
+    res.json({
+      success: true,
+      message: 'Order rejected successfully',
+      order,
+      rejectedBy: req.user.name
+    });
+    
+  } catch (error) {
+    console.error('❌ Reject order error:', error);
+    
+    if (session) {
+      try {
+        if (session.inTransaction()) {
+          await session.abortTransaction();
+        }
+        await session.endSession();
+      } catch (cleanupError) {
+        console.error('❌ Error during session cleanup:', cleanupError);
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error while rejecting order',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Confirm delivery receipt (User)
+// @route   PUT /api/orders/:id/confirm-delivery
+// @access  Private
+exports.confirmDelivery = async (req, res) => {
+  const session = await mongoose.startSession();
+  
+  try {
+    await session.startTransaction();
+    const { confirmationNote } = req.body;
+    
+    const order = await Order.findById(req.params.id).session(session);
+    
+    if (!order) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+    
+    if (order.customer.user.toString() !== req.user.id) {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to confirm this order'
+      });
+    }
+    
+    if (order.orderStatus !== 'delivered') {
+      await session.abortTransaction();
+      await session.endSession();
+      return res.status(400).json({
+        success: false,
+        message: 'Only delivered orders can be confirmed'
+      });
+    }
+    
+    order.orderStatus = 'confirmed';
+    order.confirmedAt = new Date();
+    order.confirmedBy = req.user.id;
+    
+    order.statusHistory.push({
+      status: 'confirmed',
+      note: `Delivery confirmed. Note: ${confirmationNote || 'No note provided'}`,
+      changedBy: req.user.id
+    });
+    
+    await createOrderNotification(order, 'confirmed', confirmationNote, req.user.id);
+    
+    const sale = await createSaleFromOrder(order, req.user.id, session);
+    order.saleReference = sale._id;
+    
+    await order.save({ session });
+    await session.commitTransaction();
+    await session.endSession();
+    
+    res.json({
+      success: true,
+      message: 'Delivery confirmed successfully',
+      order,
+      confirmedBy: req.user.name
+    });
+    
+  } catch (error) {
+    console.error('❌ Confirm delivery error:', error);
+    
+    if (session) {
+      try {
+        if (session.inTransaction()) {
+          await session.abortTransaction();
+        }
+        await session.endSession();
+      } catch (cleanupError) {
+        console.error('❌ Error during session cleanup:', cleanupError);
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error while confirming delivery',
       error: error.message
     });
   }
