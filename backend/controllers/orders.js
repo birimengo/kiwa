@@ -4,6 +4,8 @@ const Sale = require('../models/Sale');
 const Notification = require('../models/Notification');
 const mongoose = require('mongoose');
 
+// ==================== HELPER FUNCTIONS ====================
+
 // Helper function to generate order number
 const generateOrderNumber = async () => {
   const date = new Date();
@@ -37,10 +39,8 @@ async function createOrderNotification(order, type = 'new_order', note = '', tar
     let usersToNotify = [];
     
     if (targetUserId) {
-      // Notify specific user
       usersToNotify.push({ _id: targetUserId });
     } else {
-      // Default: notify all admins for new orders
       const adminUsers = await User.find({ role: 'admin', isActive: true }).select('_id');
       usersToNotify = adminUsers;
     }
@@ -262,7 +262,6 @@ async function filterOrdersByProductOwnership(orders, adminId) {
   const adminProductIds = await getAdminProductIds(adminId);
   
   return orders.map(order => {
-    // Filter items within each order to only show products owned by this admin
     const ownedItems = order.items.filter(item => {
       if (!item.product || !item.product._id) return false;
       return adminProductIds.some(productId => 
@@ -272,7 +271,6 @@ async function filterOrdersByProductOwnership(orders, adminId) {
     
     if (ownedItems.length === 0) return null;
     
-    // Calculate new totals based on filtered items
     const subtotal = ownedItems.reduce((sum, item) => sum + item.totalPrice, 0);
     const totalAmount = subtotal + (order.shippingFee || 0) + (order.taxAmount || 0) - (order.discountAmount || 0);
     
@@ -284,6 +282,8 @@ async function filterOrdersByProductOwnership(orders, adminId) {
     };
   }).filter(order => order !== null);
 }
+
+// ==================== MAIN CONTROLLER FUNCTIONS ====================
 
 // @desc    Create new order
 // @route   POST /api/orders
@@ -307,7 +307,6 @@ exports.createOrder = async (req, res) => {
       userId: req.user.id
     });
 
-    // Validate required fields
     if (!items || !Array.isArray(items) || items.length === 0) {
       console.error('❌ No items in order');
       await session.abortTransaction();
@@ -328,7 +327,6 @@ exports.createOrder = async (req, res) => {
       });
     }
 
-    // Process order items and validate stock
     const orderItems = [];
     let subtotal = 0;
 
@@ -412,7 +410,6 @@ exports.createOrder = async (req, res) => {
 
       subtotal += totalPrice;
 
-      // Update product stock
       const previousStock = product.stock;
       const newStock = previousStock - cartItem.quantity;
       
@@ -435,7 +432,6 @@ exports.createOrder = async (req, res) => {
       await product.save({ session });
     }
 
-    // Calculate shipping fee and tax
     const shippingFee = calculateShippingFee(orderItems, customerInfo.location);
     const taxAmount = calculateTaxAmount(subtotal);
     const totalAmount = subtotal + shippingFee + taxAmount;
@@ -472,7 +468,6 @@ exports.createOrder = async (req, res) => {
 
     await order.save({ session });
 
-    // Update stock history with order reference
     console.log('🔄 Updating stock history with order references...');
     for (const item of order.items) {
       const product = await Product.findById(item.product).session(session);
@@ -483,7 +478,6 @@ exports.createOrder = async (req, res) => {
       }
     }
 
-    // Create notification for admin users
     await createOrderNotification(order, 'new_order');
 
     console.log('✅ Committing transaction...');
@@ -549,7 +543,6 @@ exports.getMyOrders = async (req, res) => {
     console.log('📋 Fetching user orders...');
     console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
-    // Regular users can only see their own orders
     let query = { 'customer.user': req.user.id };
     
     if (status && status !== 'all') {
@@ -625,18 +618,15 @@ exports.getOrder = async (req, res) => {
       });
     }
     
-    // Check access permissions
     let hasAccess = false;
     let filteredOrder = { ...order.toObject() };
     
     const isOwner = order.customer.user._id.toString() === req.user.id;
     const isAdmin = req.user.role === 'admin';
     
-    // Non-admin users can only see their own orders
     if (!isAdmin) {
       hasAccess = isOwner;
     } else {
-      // Admin users: Check if they own products in the order
       const ownsProductsInOrder = order.items.some(item => 
         item.product && 
         item.product.createdBy && 
@@ -648,7 +638,6 @@ exports.getOrder = async (req, res) => {
       
       hasAccess = ownsProductsInOrder || isProcessor || isDeliverer || isOwner;
       
-      // If admin only owns some products, filter the items
       if (ownsProductsInOrder && !isOwner) {
         filteredOrder.items = order.items.filter(item => 
           item.product && 
@@ -656,7 +645,6 @@ exports.getOrder = async (req, res) => {
           item.product.createdBy._id.toString() === req.user.id
         );
         
-        // Recalculate totals
         filteredOrder.subtotal = filteredOrder.items.reduce((sum, item) => sum + item.totalPrice, 0);
         filteredOrder.totalAmount = filteredOrder.subtotal + 
                                    (filteredOrder.shippingFee || 0) + 
@@ -712,19 +700,16 @@ exports.getAllOrders = async (req, res) => {
     
     let query = {};
     
-    // Status filter
     if (status && status !== 'all') {
       query.orderStatus = status;
     }
     
-    // Date range filter
     if (startDate || endDate) {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
       if (endDate) query.createdAt.$lte = new Date(endDate);
     }
     
-    // System view shows all orders
     if (view === 'system') {
       console.log('🔍 Admin system view - showing all orders');
     }
@@ -790,15 +775,12 @@ exports.getAdminProcessedOrders = async (req, res) => {
     console.log('📋 Fetching admin processed orders...');
     console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
-    // Filter by processedBy field
     let query = { processedBy: req.user._id };
     
-    // Status filter
     if (status && status !== 'all') {
       query.orderStatus = status;
     }
     
-    // Date range filter
     if (startDate || endDate) {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
@@ -866,16 +848,13 @@ exports.getAdminProductOrders = async (req, res) => {
     console.log('📋 Fetching admin product-specific orders...');
     console.log('👤 User:', req.user ? `${req.user.name} (${req.user.role})` : 'No user');
     
-    // Get admin's product IDs
     const adminProductIds = await getAdminProductIds(req.user._id);
     
     let query = {};
     
-    // Only show orders containing admin's products
     if (adminProductIds.length > 0) {
       query['items.product'] = { $in: adminProductIds };
     } else {
-      // If no products, return empty
       return res.json({
         success: true,
         count: 0,
@@ -895,12 +874,10 @@ exports.getAdminProductOrders = async (req, res) => {
       });
     }
     
-    // Status filter
     if (status && status !== 'all') {
       query.orderStatus = status;
     }
     
-    // Date range filter
     if (startDate || endDate) {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
@@ -927,7 +904,6 @@ exports.getAdminProductOrders = async (req, res) => {
       .limit(parseInt(limit))
       .lean();
     
-    // Filter items within each order
     const filteredOrders = await filterOrdersByProductOwnership(orders, req.user._id);
     
     const total = await Order.countDocuments(query);
@@ -997,7 +973,6 @@ exports.updateOrderStatus = async (req, res) => {
       });
     }
     
-    // Check if admin owns products in this order
     if (req.user.role === 'admin') {
       const adminProductIds = await getAdminProductIds(req.user._id);
       const orderProductIds = order.items.map(item => item.product.toString());
@@ -1018,7 +993,6 @@ exports.updateOrderStatus = async (req, res) => {
     const previousStatus = order.orderStatus;
     order.orderStatus = orderStatus;
     
-    // Add to status history
     order.statusHistory.push({
       status: orderStatus,
       note: note || `Status changed from ${previousStatus} to ${orderStatus} by ${req.user.name}`,
@@ -1098,7 +1072,6 @@ exports.cancelOrder = async (req, res) => {
       });
     }
     
-    // Check if user owns the order
     if (order.customer.user.toString() !== req.user.id) {
       await session.abortTransaction();
       await session.endSession();
@@ -1108,7 +1081,6 @@ exports.cancelOrder = async (req, res) => {
       });
     }
     
-    // Only allow cancellation for pending orders
     if (order.orderStatus !== 'pending') {
       await session.abortTransaction();
       await session.endSession();
@@ -1123,7 +1095,6 @@ exports.cancelOrder = async (req, res) => {
     order.cancelledAt = new Date();
     order.cancellationReason = reason || 'Cancelled by customer';
     
-    // Add to status history
     order.statusHistory.push({
       status: 'cancelled',
       note: `Order cancelled by user ${req.user.name}. Reason: ${reason || 'Not specified'}`,
@@ -1191,7 +1162,6 @@ exports.processOrder = async (req, res) => {
       });
     }
     
-    // Check if admin owns products in this order
     const adminProductIds = await getAdminProductIds(req.user._id);
     const orderProductIds = order.items.map(item => item.product.toString());
     const ownsProducts = orderProductIds.some(productId => 
@@ -1286,7 +1256,6 @@ exports.deliverOrder = async (req, res) => {
       });
     }
     
-    // Check if admin owns products in this order
     const adminProductIds = await getAdminProductIds(req.user._id);
     const orderProductIds = order.items.map(item => item.product.toString());
     const ownsProducts = orderProductIds.some(productId => 
@@ -1383,7 +1352,6 @@ exports.rejectOrder = async (req, res) => {
       });
     }
     
-    // Check if admin owns products in this order
     const adminProductIds = await getAdminProductIds(req.user._id);
     const orderProductIds = order.items.map(item => item.product.toString());
     const ownsProducts = orderProductIds.some(productId => 
@@ -1481,7 +1449,6 @@ exports.confirmDelivery = async (req, res) => {
       });
     }
     
-    // Check if user owns the order
     if (order.customer.user.toString() !== req.user.id) {
       await session.abortTransaction();
       await session.endSession();
@@ -1491,7 +1458,6 @@ exports.confirmDelivery = async (req, res) => {
       });
     }
     
-    // Only allow confirmation for delivered orders
     if (order.orderStatus !== 'delivered') {
       await session.abortTransaction();
       await session.endSession();
@@ -1514,7 +1480,6 @@ exports.confirmDelivery = async (req, res) => {
     
     await createOrderNotification(order, 'confirmed', confirmationNote, req.user.id);
     
-    // Create sale record when order is confirmed
     const sale = await createSaleFromOrder(order, req.user.id, session);
     order.saleReference = sale._id;
     
@@ -1632,11 +1597,9 @@ exports.getOrderStats = async (req, res) => {
       }
       
       // For product ownership, we need a different approach
-      // Instead of trying to filter in the query, we'll aggregate differently
       console.log(`📊 Admin has ${adminProductIds.length} products, using special aggregation`);
       
-      // Use a simplified approach - get all orders and filter in memory
-      // This is less efficient but works for now
+      // Get all orders and filter in memory
       const allOrders = await Order.find(baseQuery).lean();
       
       // Filter orders that contain admin's products
