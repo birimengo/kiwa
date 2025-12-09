@@ -36,6 +36,7 @@ const analyticsRoutes = require('./routes/analytics');
 const dashboardRoutes = require('./routes/dashboard');
 const orderRoutes = require('./routes/orders');
 const notificationRoutes = require('./routes/notifications');
+const wholesalerRoutes = require('./routes/wholesalerRoutes');
 // const cartRoutes = require('./routes/cart'); // COMMENT OUT FOR NOW
 
 // Route middleware
@@ -48,7 +49,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/notifications', notificationRoutes);
 // app.use('/api/cart', cartRoutes); // COMMENT OUT FOR NOW
-
+app.use('/api/wholesalers', wholesalerRoutes);
 // Admin Registration Page (if hosted on same server)
 app.get('/admin/register', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-registration.html'));
