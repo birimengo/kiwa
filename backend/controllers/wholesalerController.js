@@ -10,7 +10,7 @@ exports.getWholesalers = async (req, res) => {
       role: 'admin',
       isActive: true 
     })
-    .select('name email phone createdAt lastLogin')
+    .select('name email phone createdAt lastLogin isActive') // ✅ Added isActive field
     .sort({ createdAt: -1 });
 
     res.json({
@@ -23,7 +23,8 @@ exports.getWholesalers = async (req, res) => {
         phone: wholesaler.phone || '',
         createdAt: wholesaler.createdAt,
         lastLogin: wholesaler.lastLogin,
-        memberSince: wholesaler.createdAt
+        memberSince: wholesaler.createdAt,
+        isActive: wholesaler.isActive // ✅ Now includes isActive field
       }))
     });
   } catch (error) {
