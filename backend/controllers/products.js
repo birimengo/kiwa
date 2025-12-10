@@ -1,6 +1,7 @@
 const Product = require('../models/Product');
 const mongoose = require('mongoose');
 const Sale = require('../models/Sale');
+const User = require('../models/User');
 
 // Helper function to add user filter to query
 const addUserFilterToQuery = (req, query, fieldName = 'createdBy') => {
@@ -50,6 +51,22 @@ const getUserFilterForContext = (req, context = 'products') => {
   
   return filter;
 };
+
+// Helper function to calculate product performance rating
+function calculateProductPerformance(totalProfit, profitMargin, sellThroughRate) {
+  const profitScore = totalProfit > 1000 ? 100 : (totalProfit / 1000) * 100;
+  const marginScore = profitMargin;
+  const sellThroughScore = sellThroughRate;
+  
+  const overall = (profitScore + marginScore + sellThroughScore) / 3;
+  
+  if (overall >= 80) return 'excellent';
+  if (overall >= 60) return 'good';
+  if (overall >= 40) return 'average';
+  return 'poor';
+}
+
+// ==================== EXISTING FUNCTIONALITIES ====================
 
 // @desc    Get all products with filtering, sorting, and pagination
 // @route   GET /api/products
@@ -1100,7 +1117,7 @@ exports.updateStockAlert = async (req, res) => {
   }
 };
 
-// ==================== NEW ANALYTICS ENDPOINTS ====================
+// ==================== ANALYTICS ENDPOINTS ====================
 
 // @desc    Get product performance analytics
 // @route   GET /api/products/:id/performance
@@ -1610,16 +1627,133 @@ exports.getAdminProducts = async (req, res) => {
   }
 };
 
-// Helper function to calculate product performance rating
-function calculateProductPerformance(totalProfit, profitMargin, sellThroughRate) {
-  const profitScore = totalProfit > 1000 ? 100 : (totalProfit / 1000) * 100;
-  const marginScore = profitMargin;
-  const sellThroughScore = sellThroughRate;
-  
-  const overall = (profitScore + marginScore + sellThroughScore) / 3;
-  
-  if (overall >= 80) return 'excellent';
-  if (overall >= 60) return 'good';
-  if (overall >= 40) return 'average';
-  return 'poor';
-}
+// ==================== NEW WHOLESALER PRODUCTS ENDPOINT ====================
+
+// @desc    Get products by wholesaler ID (public endpoint)
+// @route   GET /api/products/wholesaler/:wholesalerId
+// @access  Public
+exports.getWholesalerProducts = async (req, res) => {
+  try {
+    const { wholesalerId } = req.params;
+    const { category, search, page = 1, limit = 100, sortBy = 'newest' } = req.query;
+    
+    console.log(`📦 Fetching products for wholesaler: ${wholesalerId}`);
+    console.log('🔍 Query params:', { category, search, page, limit, sortBy });
+    
+    // Validate wholesaler ID
+    if (!mongoose.Types.ObjectId.isValid(wholesalerId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid wholesaler ID format'
+      });
+    }
+    
+    // Build query - Filter by the wholesaler who created the product
+    let query = { 
+      isActive: true,
+      createdBy: wholesalerId // This is the key filter - products created by this wholesaler
+    };
+    
+    // Apply search
+    if (search && search.trim() !== '') {
+      query.$text = { $search: search.trim() };
+    }
+    
+    // Apply category filter
+    if (category && category !== 'All' && category !== '') {
+      query.category = { $regex: new RegExp(category, 'i') };
+    }
+    
+    // Apply sorting
+    let sort = { createdAt: -1 };
+    if (sortBy) {
+      switch (sortBy) {
+        case 'price-low':
+          sort = { sellingPrice: 1 };
+          break;
+        case 'price-high':
+          sort = { sellingPrice: -1 };
+          break;
+        case 'name':
+          sort = { name: 1 };
+          break;
+        case 'featured':
+          sort = { featured: -1, createdAt: -1 };
+          break;
+        case 'totalSold':
+          sort = { totalSold: -1 };
+          break;
+        case 'rating':
+          sort = { averageRating: -1 };
+          break;
+        default:
+          sort = { createdAt: -1 };
+      }
+    }
+    
+    // Pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    console.log(`🔍 Wholesaler Products Query:`, { 
+      wholesalerId,
+      query: { ...query },
+      page, limit, skip, sort
+    });
+    
+    // Get products
+    const products = await Product.find(query)
+      .select('name brand sellingPrice purchasePrice category stock images description averageRating totalReviews featured createdAt totalSold lowStockAlert createdBy')
+      .populate('createdBy', 'name email')
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+    
+    // Get total count
+    const total = await Product.countDocuments(query);
+    const totalPages = Math.ceil(total / limit);
+    const hasNextPage = page < totalPages;
+    const hasPrevPage = page > 1;
+    
+    // Get wholesaler info for the response
+    const wholesaler = await User.findById(wholesalerId).select('name email phone createdAt');
+    
+    console.log(`✅ Found ${products.length} products for wholesaler ${wholesalerId} (${wholesaler?.name || 'Unknown'})`);
+    
+    res.json({
+      success: true,
+      count: products.length,
+      total,
+      products,
+      wholesaler: wholesaler ? {
+        _id: wholesaler._id,
+        name: wholesaler.name,
+        email: wholesaler.email,
+        phone: wholesaler.phone,
+        memberSince: wholesaler.createdAt
+      } : null,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages,
+        hasNextPage,
+        hasPrevPage,
+        nextPage: hasNextPage ? page + 1 : null,
+        prevPage: hasPrevPage ? page - 1 : null
+      },
+      filterInfo: {
+        isFiltered: true,
+        userId: wholesalerId,
+        viewType: 'wholesaler'
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Get wholesaler products error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching wholesaler products',
+      error: error.message
+    });
+  }
+};
