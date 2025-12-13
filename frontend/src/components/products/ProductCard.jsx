@@ -3,17 +3,21 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useCartStore } from '../../stores/cartStore';
 import { productsAPI } from '../../services/api';
-import { Heart, MessageCircle, Phone, ShoppingCart, Star, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Heart, MessageCircle, Phone, ShoppingCart, Star, ChevronLeft, ChevronRight, Building } from 'lucide-react';
 
 const ProductCard = ({ product }) => {
   const [isLiked, setIsLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(product.likes?.length || 0);
   const [loading, setLoading] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [wholesaler, setWholesaler] = useState(null);
   
   const { user, isLoggedIn, requireAuth } = useAuth();
   const { addItem } = useCartStore();
   const navigate = useNavigate();
+
+  // Default phone number
+  const DEFAULT_PHONE = '+256751808507';
 
   // Initialize like state based on current user
   useEffect(() => {
@@ -25,6 +29,17 @@ const ProductCard = ({ product }) => {
     }
     setLikeCount(product.likes?.length || 0);
   }, [product.likes, user]);
+
+  // Extract wholesaler information
+  useEffect(() => {
+    // Check if product has wholesaler/soldBy information
+    if (product.soldBy) {
+      setWholesaler(product.soldBy);
+    } else if (product.createdBy) {
+      // If soldBy not available, check createdBy
+      setWholesaler(product.createdBy);
+    }
+  }, [product.soldBy, product.createdBy]);
 
   const handleLike = async (e) => {
     e.preventDefault();
@@ -69,8 +84,10 @@ const ProductCard = ({ product }) => {
     e.preventDefault();
     e.stopPropagation();
     
-    const message = `Hi, I'm interested in ${product.name}. Price: UGX ${product.sellingPrice?.toLocaleString()}. Can you provide more details?`;
-    const phoneNumber = '+256751808507'; // CHANGED HERE
+    // Use wholesaler's phone if available, otherwise use default
+    const phoneNumber = wholesaler?.phone || DEFAULT_PHONE;
+    const wholesalerName = wholesaler?.name ? ` (${wholesaler.name})` : '';
+    const message = `Hi${wholesalerName}, I'm interested in ${product.name}. Price: UGX ${product.sellingPrice?.toLocaleString()}. Can you provide more details?`;
     const url = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
   };
@@ -79,8 +96,9 @@ const ProductCard = ({ product }) => {
     e.preventDefault();
     e.stopPropagation();
     
-    const phoneNumber = 'tel:+256751808507';
-    window.location.href = phoneNumber;
+    // Use wholesaler's phone if available, otherwise use default
+    const phoneNumber = wholesaler?.phone || DEFAULT_PHONE;
+    window.location.href = `tel:${phoneNumber}`;
   };
 
   const handleCommentClick = (e) => {
@@ -107,6 +125,18 @@ const ProductCard = ({ product }) => {
 
   const handleCardClick = () => {
     navigate(`/products/${product._id}`);
+  };
+
+  const handleWholesalerClick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (wholesaler?._id) {
+      navigate({
+        pathname: '/products',
+        search: `?wholesaler=${wholesaler._id}&wholesalerName=${encodeURIComponent(wholesaler.name || 'Unknown')}`
+      });
+    }
   };
 
   const hasMultipleImages = product.images && product.images.length > 1;
@@ -202,6 +232,20 @@ const ProductCard = ({ product }) => {
           }`}>
             {product.stock || 0} in stock
           </span>
+
+          {/* Wholesaler Info - Only show if not already viewing from wholesaler page */}
+          {wholesaler?.name && (
+            <div className="mt-2">
+              <button
+                onClick={handleWholesalerClick}
+                className="inline-flex items-center gap-1 bg-purple-600/80 hover:bg-purple-700/80 text-white text-xs px-2 py-1 rounded backdrop-blur-sm transition-colors"
+                title={`View all products from ${wholesaler.name}`}
+              >
+                <Building className="h-2.5 w-2.5" />
+                <span className="truncate max-w-[100px]">{wholesaler.name}</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Bottom Section - Action Buttons */}

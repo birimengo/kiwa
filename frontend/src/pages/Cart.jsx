@@ -127,36 +127,17 @@ const Cart = () => {
     handleInputChange('phoneNumber', formattedPhone);
   };
 
-  // Theme-aware styling functions
-  const getThemeClasses = () => {
-    return {
-      bg: {
-        primary: 'bg-gray-50 dark:bg-gray-900 ocean:bg-gradient-to-br ocean:from-blue-900 ocean:via-blue-800 ocean:to-blue-700',
-      },
-      text: {
-        primary: 'text-gray-900 dark:text-white ocean:text-white',
-        secondary: 'text-gray-700 dark:text-gray-300 ocean:text-blue-100',
-        muted: 'text-gray-500 dark:text-gray-400 ocean:text-blue-200'
-      },
-      border: 'border-gray-200 dark:border-gray-700 ocean:border-blue-600',
-      surface: 'bg-white dark:bg-gray-800 ocean:bg-blue-800',
-      hover: 'hover:bg-gray-50 dark:hover:bg-gray-700 ocean:hover:bg-blue-700'
-    };
-  };
-
-  const themeClasses = getThemeClasses();
-
   // Empty state for non-logged in users
   if (!isLoggedIn) {
     return (
-      <div className={`min-h-screen ${themeClasses.bg.primary} flex items-center justify-center p-4`}>
+      <div className="min-h-screen theme-bg flex items-center justify-center p-4">
         <div className="text-center max-w-md">
-          <ShoppingBag className={`h-12 w-12 ${themeClasses.text.muted} mx-auto mb-3`} />
-          <h2 className={`text-xl font-bold ${themeClasses.text.primary} mb-2`}>Please Login</h2>
-          <p className={`${themeClasses.text.muted} mb-4 text-sm`}>You need to be logged in to view your cart.</p>
+          <ShoppingBag className="h-12 w-12 theme-text-muted mx-auto mb-3" />
+          <h2 className="text-xl font-bold theme-text mb-2">Please Login</h2>
+          <p className="theme-text-muted mb-4 text-sm">You need to be logged in to view your cart.</p>
           <button
             onClick={() => navigate('/login', { state: { from: '/cart' } })}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium text-sm transition-colors"
+            className="theme-primary theme-primary-hover text-white px-6 py-2 rounded-lg font-medium text-sm transition-colors"
           >
             Login Now
           </button>
@@ -168,14 +149,14 @@ const Cart = () => {
   // Empty cart state
   if (items.length === 0) {
     return (
-      <div className={`min-h-screen ${themeClasses.bg.primary} flex items-center justify-center p-4`}>
+      <div className="min-h-screen theme-bg flex items-center justify-center p-4">
         <div className="text-center max-w-md">
-          <ShoppingBag className={`h-12 w-12 ${themeClasses.text.muted} mx-auto mb-3`} />
-          <h2 className={`text-xl font-bold ${themeClasses.text.primary} mb-2`}>Your cart is empty</h2>
-          <p className={`${themeClasses.text.muted} mb-4 text-sm`}>Add some products to your cart to see them here.</p>
+          <ShoppingBag className="h-12 w-12 theme-text-muted mx-auto mb-3" />
+          <h2 className="text-xl font-bold theme-text mb-2">Your cart is empty</h2>
+          <p className="theme-text-muted mb-4 text-sm">Add some products to your cart to see them here.</p>
           <Link
             to="/products"
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium text-sm inline-block transition-colors"
+            className="theme-primary theme-primary-hover text-white px-6 py-2 rounded-lg font-medium text-sm inline-block transition-colors"
           >
             Continue Shopping
           </Link>
@@ -185,27 +166,27 @@ const Cart = () => {
   }
 
   return (
-    <div className={`min-h-screen ${themeClasses.bg.primary} py-4`}>
+    <div className="min-h-screen theme-bg py-4">
       <div className="max-w-6xl mx-auto px-3 sm:px-4">
         {/* Mobile Header */}
         <div className="lg:hidden flex items-center gap-3 mb-4">
           <button 
             onClick={() => navigate(-1)} 
-            className={`p-2 ${themeClasses.text.primary} ${themeClasses.hover} rounded-lg`}
+            className="p-2 theme-text hover:theme-secondary rounded-lg transition-colors"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
-          <h1 className={`text-lg font-bold ${themeClasses.text.primary}`}>Cart ({getTotalItems()})</h1>
+          <h1 className="text-lg font-bold theme-text">Cart ({getTotalItems()})</h1>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-          {/* Cart Items - Mobile optimized */}
+          {/* Cart Items */}
           <div className="lg:col-span-2">
-            <div className={`${themeClasses.surface} rounded-xl ${themeClasses.border} border overflow-hidden`}>
+            <div className="theme-surface rounded-xl theme-border border overflow-hidden">
               {/* Desktop Header */}
-              <div className={`hidden lg:block p-4 border-b ${themeClasses.border}`}>
-                <h1 className={`text-lg font-bold ${themeClasses.text.primary}`}>Shopping Cart</h1>
-                <p className={`${themeClasses.text.muted} text-sm`}>{getTotalItems()} items</p>
+              <div className="hidden lg:block p-4 border-b theme-border">
+                <h1 className="text-lg font-bold theme-text">Shopping Cart</h1>
+                <p className="theme-text-muted text-sm">{getTotalItems()} items</p>
               </div>
 
               <div className="p-3 lg:p-4 space-y-3">
@@ -216,22 +197,26 @@ const Cart = () => {
                   return (
                     <div 
                       key={item.product._id || item.product.id} 
-                      className={`flex items-center gap-3 p-3 ${themeClasses.border} border rounded-lg`}
+                      className="flex items-center gap-3 p-3 theme-border border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 ocean:hover:bg-blue-900/20 transition-colors"
                     >
                       <img
-                        src={item.product.images?.[0] || '/api/placeholder/80/80'}
+                        src={item.product.images?.[0] || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=80&h=80&fit=crop'}
                         alt={item.product.name}
                         className="w-16 h-16 lg:w-20 lg:h-20 object-cover rounded-lg flex-shrink-0"
+                        onError={(e) => {
+                          e.target.onerror = null;
+                          e.target.src = 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=80&h=80&fit=crop';
+                        }}
                       />
                       
                       <div className="flex-1 min-w-0">
-                        <h3 className={`font-medium ${themeClasses.text.primary} text-sm lg:text-base truncate`}>
+                        <h3 className="font-medium theme-text text-sm lg:text-base truncate">
                           {item.product.name}
                         </h3>
-                        <p className={`${themeClasses.text.muted} text-xs lg:text-sm`}>
+                        <p className="theme-text-muted text-xs lg:text-sm">
                           {item.product.brand}
                         </p>
-                        <p className={`text-sm lg:text-base font-semibold ${themeClasses.text.primary}`}>
+                        <p className="text-sm lg:text-base font-semibold theme-text">
                           {formatCurrency(productPrice)}
                         </p>
                       </div>
@@ -240,28 +225,29 @@ const Cart = () => {
                         <button
                           onClick={() => updateQuantity(item.product._id || item.product.id, item.quantity - 1)}
                           disabled={item.quantity <= 1}
-                          className={`p-1 lg:p-2 rounded-full ${themeClasses.hover} disabled:opacity-30 transition-colors`}
+                          className="p-1 lg:p-2 rounded-full theme-secondary hover:bg-gray-100 dark:hover:bg-gray-700 ocean:hover:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                         >
-                          <Minus className={`h-3 w-3 lg:h-4 lg:w-4 ${themeClasses.text.primary}`} />
+                          <Minus className="h-3 w-3 lg:h-4 lg:w-4 theme-text" />
                         </button>
-                        <span className={`w-6 text-center font-medium ${themeClasses.text.primary} text-sm`}>
+                        <span className="w-6 text-center font-medium theme-text text-sm">
                           {item.quantity}
                         </span>
                         <button
                           onClick={() => updateQuantity(item.product._id || item.product.id, item.quantity + 1)}
-                          className={`p-1 lg:p-2 rounded-full ${themeClasses.hover} transition-colors`}
+                          className="p-1 lg:p-2 rounded-full theme-secondary hover:bg-gray-100 dark:hover:bg-gray-700 ocean:hover:bg-blue-700 transition-colors"
                         >
-                          <Plus className={`h-3 w-3 lg:h-4 lg:w-4 ${themeClasses.text.primary}`} />
+                          <Plus className="h-3 w-3 lg:h-4 lg:w-4 theme-text" />
                         </button>
                       </div>
 
                       <div className="text-right">
-                        <p className={`font-semibold ${themeClasses.text.primary} text-sm lg:text-base`}>
+                        <p className="font-semibold theme-text text-sm lg:text-base">
                           {formatCurrency(itemTotal)}
                         </p>
                         <button
                           onClick={() => removeItem(item.product._id || item.product.id)}
                           className="text-red-500 hover:text-red-600 p-1 transition-colors mt-1"
+                          title="Remove item"
                         >
                           <Trash2 className="h-3 w-3 lg:h-4 lg:w-4" />
                         </button>
@@ -272,16 +258,16 @@ const Cart = () => {
               </div>
 
               {/* Cart Summary */}
-              <div className={`p-3 lg:p-4 border-t ${themeClasses.border}`}>
+              <div className="p-3 lg:p-4 border-t theme-border">
                 <div className="flex justify-between items-center mb-3">
-                  <span className={`${themeClasses.text.primary} font-medium text-sm`}>Subtotal:</span>
-                  <span className={`${themeClasses.text.primary} font-semibold`}>
+                  <span className="theme-text font-medium text-sm">Subtotal:</span>
+                  <span className="theme-text font-semibold">
                     {formatCurrency(getTotalPrice())}
                   </span>
                 </div>
                 <button
                   onClick={clearCart}
-                  className="w-full bg-gray-500 hover:bg-gray-600 text-white py-2 rounded-lg font-medium text-sm transition-colors"
+                  className="w-full bg-gray-600 hover:bg-gray-700 text-white py-2 rounded-lg font-medium text-sm transition-colors"
                 >
                   Clear Cart
                 </button>
@@ -289,23 +275,23 @@ const Cart = () => {
             </div>
           </div>
 
-          {/* Checkout Section - Sticky on desktop */}
+          {/* Checkout Section */}
           <div className="lg:col-span-1">
-            <div className={`${themeClasses.surface} rounded-xl ${themeClasses.border} border overflow-hidden lg:sticky lg:top-4`}>
-              <div className={`p-4 border-b ${themeClasses.border}`}>
-                <h2 className={`font-bold ${themeClasses.text.primary} text-lg`}>Checkout</h2>
+            <div className="theme-surface rounded-xl theme-border border overflow-hidden lg:sticky lg:top-4">
+              <div className="p-4 border-b theme-border">
+                <h2 className="font-bold theme-text text-lg">Checkout</h2>
               </div>
 
               <div className="p-4">
                 {error && (
-                  <div className="mb-3 p-2 bg-red-100 border border-red-400 text-red-700 rounded-lg text-xs">
+                  <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-lg text-xs">
                     {error}
                   </div>
                 )}
 
-                {/* Payment Method - Compact */}
+                {/* Payment Method */}
                 <div className="mb-4">
-                  <label className={`block text-sm font-medium ${themeClasses.text.primary} mb-2`}>Payment</label>
+                  <label className="block text-sm font-medium theme-text mb-2">Payment Method</label>
                   <div className="grid grid-cols-2 gap-2">
                     {[
                       { value: 'onDelivery', label: 'Cash on Delivery' },
@@ -315,12 +301,13 @@ const Cart = () => {
                     ].map((method) => (
                       <button
                         key={method.value}
+                        type="button"
                         onClick={() => handleInputChange('paymentMethod', method.value)}
-                        className={`p-2 border rounded-lg text-xs transition-colors ${
-                          checkoutData.paymentMethod === method.value 
-                            ? 'bg-blue-600 text-white border-blue-600' 
-                            : `${themeClasses.border} ${themeClasses.text.primary} ${themeClasses.hover}`
-                        }`}
+                       className={`p-2 border rounded-lg text-xs transition-colors ${
+  checkoutData.paymentMethod === method.value 
+    ? 'theme-primary border-blue-600 text-blue-500 dark:text-white font-semibold' 
+    : 'theme-border theme-text hover:theme-secondary'
+}`}
                       >
                         {method.label}
                       </button>
@@ -331,31 +318,31 @@ const Cart = () => {
                 {/* Contact Information */}
                 <div className="space-y-3 mb-4">
                   <div>
-                    <label className={`block text-xs font-medium ${themeClasses.text.primary} mb-1`}>
+                    <label className="block text-xs font-medium theme-text mb-1">
                       <Phone className="h-3 w-3 inline mr-1" />
-                      Phone *
+                      Phone Number *
                     </label>
                     <input
                       type="tel"
                       value={checkoutData.phoneNumber}
                       onChange={(e) => handlePhoneChange(e.target.value)}
-                      className={`w-full p-2 text-sm border ${themeClasses.border} rounded-lg focus:ring-1 focus:ring-blue-500 transition-colors ${themeClasses.surface} ${themeClasses.text.primary}`}
+                      className="w-full p-2 text-sm theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text"
                       placeholder="0751234567"
                       required
                     />
                   </div>
                   
                   <div>
-                    <label className={`block text-xs font-medium ${themeClasses.text.primary} mb-1`}>
+                    <label className="block text-xs font-medium theme-text mb-1">
                       <MapPin className="h-3 w-3 inline mr-1" />
-                      Location *
+                      Delivery Location *
                     </label>
                     <input
                       type="text"
                       value={checkoutData.location}
                       onChange={(e) => handleInputChange('location', e.target.value)}
-                      className={`w-full p-2 text-sm border ${themeClasses.border} rounded-lg focus:ring-1 focus:ring-blue-500 transition-colors ${themeClasses.surface} ${themeClasses.text.primary}`}
-                      placeholder="Delivery address"
+                      className="w-full p-2 text-sm theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text"
+                      placeholder="Enter delivery address"
                       required
                     />
                   </div>
@@ -363,58 +350,106 @@ const Cart = () => {
 
                 {/* Additional Notes */}
                 <div className="mb-4">
-                  <label className={`block text-xs font-medium ${themeClasses.text.primary} mb-1`}>
+                  <label className="block text-xs font-medium theme-text mb-1">
                     Notes (Optional)
                   </label>
                   <textarea
                     value={checkoutData.notes}
                     onChange={(e) => handleInputChange('notes', e.target.value)}
-                    rows="2"
-                    className={`w-full p-2 text-sm border ${themeClasses.border} rounded-lg focus:ring-1 focus:ring-blue-500 transition-colors ${themeClasses.surface} ${themeClasses.text.primary}`}
-                    placeholder="Special instructions..."
+                    rows="3"
+                    className="w-full p-2 text-sm theme-border border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 theme-surface theme-text"
+                    placeholder="Special instructions, delivery notes, or additional requests..."
                   />
                 </div>
 
-                {/* Order Summary */}
-                <div className={`${themeClasses.bg.primary} p-3 rounded-lg mb-4`}>
-                  <div className="space-y-1 text-sm">
-                    <div className="flex justify-between">
-                      <span className={themeClasses.text.primary}>Subtotal:</span>
-                      <span className={themeClasses.text.primary}>{formatCurrency(getTotalPrice())}</span>
-                    </div>
-                    <div className={`border-t ${themeClasses.border} pt-2`}>
-                      <div className="flex justify-between items-center">
-                        <span className={`font-bold ${themeClasses.text.primary}`}>Total:</span>
-                        <span className={`font-bold ${themeClasses.text.primary} text-lg`}>
-                          {formatCurrency(getTotalPrice())}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+{/* Order Summary */}
+<div className="theme-secondary rounded-lg p-3 mb-4">
+  <div className="space-y-2 text-sm">
+    <div className="flex justify-between">
+      <span className="theme-text">Subtotal:</span>
+      <span className="theme-text font-medium">{formatCurrency(getTotalPrice())}</span>
+    </div>
+    <div className="flex justify-between">
+      <span className="theme-text">Delivery:</span>
+      <span className="text-green-600 dark:text-green-400 ocean:text-green-300 font-medium">
+        Free in Kampala
+      </span>
+    </div>
+    <div className="border-t theme-border pt-2 mt-2">
+      <div className="flex justify-between items-center">
+        <span className="font-bold theme-text">Total Amount:</span>
+        <span className="font-bold theme-text text-lg">
+          {formatCurrency(getTotalPrice())}
+        </span>
+      </div>
+      <p className="text-xs theme-text-muted mt-1">
+        VAT included • Free delivery within Kampala
+      </p>
+    </div>
+  </div>
+</div>
 
                 {/* Checkout Button */}
                 <button 
                   onClick={handleCheckout}
                   disabled={isProcessing || !checkoutData.phoneNumber || !checkoutData.location}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                  className="w-full theme-primary hover:theme-primary-hover text-white py-3 rounded-lg font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {isProcessing ? (
                     <>
-                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
-                      Processing...
+                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                      Processing Order...
                     </>
                   ) : (
-                    `Place Order - ${formatCurrency(getTotalPrice())}`
+                    <>
+                      <span>Place Order</span>
+                      <span className="font-bold">• {formatCurrency(getTotalPrice())}</span>
+                    </>
                   )}
                 </button>
 
-                <Link
-                  to="/products"
-                  className="block text-center text-blue-600 hover:text-blue-700 mt-3 text-sm transition-colors"
-                >
-                  Continue Shopping
-                </Link>
+                <div className="mt-3 text-center">
+                  <Link
+                    to="/products"
+                    className="inline-block text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 text-sm transition-colors"
+                  >
+                    ← Continue Shopping
+                  </Link>
+                  <p className="theme-text-muted text-xs mt-2">
+                    By placing your order, you agree to our Terms & Conditions
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Additional Info */}
+            <div className="mt-4 theme-surface rounded-xl theme-border border p-4">
+              <h3 className="font-medium theme-text text-sm mb-2">Delivery Information</h3>
+              <ul className="space-y-1.5 text-xs theme-text-muted">
+                <li className="flex items-start gap-2">
+                  <div className="w-1.5 h-1.5 bg-green-500 rounded-full mt-1 flex-shrink-0"></div>
+                  <span>Free delivery within Kampala for orders above UGX 50,000</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-1 flex-shrink-0"></div>
+                  <span>Same-day delivery for orders placed before 3 PM</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <div className="w-1.5 h-1.5 bg-purple-500 rounded-full mt-1 flex-shrink-0"></div>
+                  <span>Nationwide delivery available (charges apply)</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <div className="w-1.5 h-1.5 bg-yellow-500 rounded-full mt-1 flex-shrink-0"></div>
+                  <span>Contact us for bulk order discounts</span>
+                </li>
+              </ul>
+              
+              <div className="mt-3 pt-3 border-t theme-border">
+                <h4 className="font-medium theme-text text-xs mb-1">Need Help?</h4>
+                <div className="text-xs theme-text-muted space-y-0.5">
+                  <p>☎️ Call: +256 751 808 507</p>
+                  <p>📧 Email: gogreenuganda70@gmail.com</p>
+                </div>
               </div>
             </div>
           </div>

@@ -1,6 +1,7 @@
+// Update the Products.jsx component to add wholesaler filtering
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Filter, Grid, List, ChevronDown, AlertCircle, RefreshCw, Search, X } from 'lucide-react';
+import { Filter, Grid, List, ChevronDown, AlertCircle, RefreshCw, Search, X, Building, User } from 'lucide-react';
 import ProductCard from '../components/products/ProductCard';
 import { productsAPI } from '../services/api';
 import SEO from '../components/SEO';
@@ -19,19 +20,25 @@ const Products = () => {
   const [backendConnected, setBackendConnected] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [wholesalerFilter, setWholesalerFilter] = useState(null);
+  const [wholesalerName, setWholesalerName] = useState('');
   
   const location = useLocation();
   const abortControllerRef = useRef(null);
   const searchTimeoutRef = useRef(null);
   
-  // Get search query from URL parameters
-  const getSearchQueryFromURL = useCallback(() => {
+  // Get query parameters from URL
+  const getQueryParamsFromURL = useCallback(() => {
     const searchParams = new URLSearchParams(location.search);
-    return searchParams.get('search') || '';
+    return {
+      search: searchParams.get('search') || '',
+      wholesaler: searchParams.get('wholesaler') || '',
+      wholesalerName: searchParams.get('wholesalerName') || ''
+    };
   }, [location.search]);
 
   // Single fetch function with abort controller
-  const fetchProducts = useCallback(async (searchQuery = '', category = '', min = '', max = '', sortOption = 'newest') => {
+  const fetchProducts = useCallback(async (searchQuery = '', category = '', min = '', max = '', sortOption = 'newest', wholesalerId = '') => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -48,6 +55,7 @@ const Products = () => {
       };
       
       if (category && category !== 'All') params.category = category.toLowerCase();
+      if (wholesalerId) params.createdBy = wholesalerId; // Filter by wholesaler ID
       
       const response = await productsAPI.getProducts(params, {
         signal: abortControllerRef.current.signal
@@ -165,6 +173,13 @@ const Products = () => {
       );
     }
     
+    // Apply wholesaler filter
+    if (wholesalerFilter) {
+      filteredProducts = filteredProducts.filter(product => 
+        product.soldBy?._id === wholesalerFilter || product.createdBy === wholesalerFilter
+      );
+    }
+    
     filteredProducts = applyPriceFilter(filteredProducts, minPrice, maxPrice);
     filteredProducts = applySorting(filteredProducts, sortBy);
     
@@ -191,6 +206,13 @@ const Products = () => {
     applyFiltersAndSearch('');
   };
 
+  // Clear wholesaler filter
+  const handleClearWholesalerFilter = () => {
+    setWholesalerFilter(null);
+    setWholesalerName('');
+    applyFiltersAndSearch(searchTerm);
+  };
+
   // Handle price range changes
   const handleMinPriceChange = (e) => {
     const value = e.target.value.replace(/\D/g, '');
@@ -207,23 +229,29 @@ const Products = () => {
     if (allProducts.length > 0) {
       applyFiltersAndSearch(searchTerm);
     }
-  }, [minPrice, maxPrice, selectedCategory, sortBy, allProducts]);
+  }, [minPrice, maxPrice, selectedCategory, sortBy, wholesalerFilter, allProducts]);
 
   // Single useEffect for initial load
   useEffect(() => {
-    const urlSearchQuery = getSearchQueryFromURL();
-    if (urlSearchQuery) {
-      setSearchTerm(urlSearchQuery);
+    const { search, wholesaler, wholesalerName } = getQueryParamsFromURL();
+    
+    if (search) {
+      setSearchTerm(search);
+    }
+    
+    if (wholesaler) {
+      setWholesalerFilter(wholesaler);
+      setWholesalerName(decodeURIComponent(wholesalerName));
     }
     
     const timeoutId = setTimeout(() => {
-      fetchProducts(urlSearchQuery, selectedCategory, minPrice, maxPrice, sortBy);
+      fetchProducts(search, selectedCategory, minPrice, maxPrice, sortBy, wholesaler);
     }, 300);
 
     return () => {
       clearTimeout(timeoutId);
     };
-  }, [getSearchQueryFromURL, selectedCategory, minPrice, maxPrice, sortBy, fetchProducts]);
+  }, [getQueryParamsFromURL, selectedCategory, minPrice, maxPrice, sortBy, fetchProducts]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -260,6 +288,8 @@ const Products = () => {
     setMinPrice('');
     setMaxPrice('');
     setSortBy('newest');
+    setWholesalerFilter(null);
+    setWholesalerName('');
     handleClearSearch();
     setFiltersOpen(false);
     setMobileFiltersOpen(false);
@@ -269,17 +299,18 @@ const Products = () => {
     let count = 0;
     if (selectedCategory && selectedCategory !== 'All') count++;
     if (minPrice || maxPrice) count++;
+    if (wholesalerFilter) count++;
     return count;
   };
 
   const retryBackendConnection = () => {
     setError('');
-    const urlSearchQuery = getSearchQueryFromURL();
-    fetchProducts(urlSearchQuery, selectedCategory, minPrice, maxPrice, sortBy);
+    const { search, wholesaler } = getQueryParamsFromURL();
+    fetchProducts(search, selectedCategory, minPrice, maxPrice, sortBy, wholesaler);
   };
 
-  const urlSearchQuery = getSearchQueryFromURL();
-  const currentSearchTerm = urlSearchQuery || searchTerm;
+  const { search: urlSearch } = getQueryParamsFromURL();
+  const currentSearchTerm = urlSearch || searchTerm;
 
   // Format price for display
   const formatPrice = (price) => {
@@ -287,9 +318,21 @@ const Products = () => {
     return `UGX ${parseInt(price).toLocaleString()}`;
   };
 
-  // Filter chips component
+  // Filter chips component - Updated to include wholesaler filter
   const FilterChips = () => (
     <div className="flex flex-wrap gap-1.5 mb-2">
+      {wholesalerFilter && wholesalerName && (
+        <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 text-xs">
+          <User className="h-2.5 w-2.5" />
+          {wholesalerName}
+          <button
+            onClick={handleClearWholesalerFilter}
+            className="ml-0.5 hover:text-purple-600 dark:hover:text-purple-300"
+          >
+            <X className="h-2.5 w-2.5" />
+          </button>
+        </span>
+      )}
       {selectedCategory && selectedCategory !== 'All' && (
         <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 text-xs">
           {selectedCategory}
@@ -361,25 +404,30 @@ const Products = () => {
     <>
       {/* SEO COMPONENT */}
       <SEO
-        title="Electrical Products Uganda | Wholesale & Retail Prices | Kampala"
-        description={`Browse ${products.length} electrical products at wholesale prices in Uganda. Categories: ${getCategoryNames()}. ☎️ Call 0751808507 for bulk orders.`}
-        keywords="electrical products Uganda, wholesale electrical goods, generators Kampala, solar systems Uganda, wires cables, switches sockets"
+        title={`${wholesalerName ? `${wholesalerName}'s Products - ` : ''}Electrical Products Uganda | Wholesale & Retail Prices | Kampala`}
+        description={`Browse ${products.length} electrical products ${wholesalerName ? `from ${wholesalerName}` : ''} at wholesale prices in Uganda. Categories: ${getCategoryNames()}. ☎️ Call 0751808507 for bulk orders.`}
+        keywords={`${wholesalerName ? `${wholesalerName}, ` : ''}electrical products Uganda, wholesale electrical goods, generators Kampala, solar systems Uganda, wires cables, switches sockets`}
         pageType="collection"
         productData={products}
       />
       
       <div className="min-h-screen theme-bg">
-        {/* Header Section - COMPACT */}
+        {/* Header Section - COMPACT - Updated for wholesaler */}
         <div className="theme-surface shadow-xs theme-border border-b">
           <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-1.5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
               <div className="flex items-center">
                 <h1 className="text-lg font-bold theme-text">
-                  Electrical Products
+                  {wholesalerName ? `${wholesalerName}'s Products` : 'Electrical Products'}
                   <span className="text-xs font-normal theme-text-muted ml-1.5">
                     {products.length} items
                   </span>
                 </h1>
+                {wholesalerName && (
+                  <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">
+                    Wholesaler
+                  </span>
+                )}
                 {error && backendConnected && (
                   <span className="text-red-600 text-[10px] ml-1.5 bg-red-100 px-1 py-0.5 rounded">Error</span>
                 )}
@@ -392,8 +440,14 @@ const Products = () => {
             </div>
             {/* Ultra-compact subheader */}
             <div className="mt-0.5 text-[10px] theme-text-muted truncate">
-              <span className="hidden sm:inline">Wholesale electrical supplies | Best prices Uganda | Call 0751808507</span>
-              <span className="sm:hidden">Wholesale | Free delivery | ☎️ 0751808507</span>
+              <span className="hidden sm:inline">
+                {wholesalerName 
+                  ? `${wholesalerName}'s wholesale electrical supplies | Best prices Uganda`
+                  : 'Wholesale electrical supplies | Best prices Uganda | Call 0751808507'}
+              </span>
+              <span className="sm:hidden">
+                {wholesalerName ? `${wholesalerName}'s products` : 'Wholesale'} | Free delivery | ☎️ 0751808507
+              </span>
             </div>
           </div>
         </div>
@@ -430,7 +484,7 @@ const Products = () => {
                   type="text"
                   value={searchTerm}
                   onChange={handleSearchChange}
-                  placeholder="Search electrical products..."
+                  placeholder={wholesalerName ? `Search ${wholesalerName}'s products...` : "Search electrical products..."}
                   className="w-full pl-9 pr-16 py-1.5 text-sm theme-border border rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 theme-surface theme-text"
                 />
                 <div className="absolute right-1 top-1/2 transform -translate-y-1/2 flex items-center gap-1">
@@ -455,7 +509,9 @@ const Products = () => {
             </form>
             {/* Compact search description */}
             <p className="text-center text-[10px] theme-text-muted mt-0.5">
-              Search generators, solar, wires, switches, appliances
+              {wholesalerName 
+                ? `Search ${wholesalerName}'s products`
+                : 'Search generators, solar, wires, switches, appliances'}
             </p>
           </div>
 
@@ -464,7 +520,10 @@ const Products = () => {
             <div className="flex items-center justify-between">
               <div className="text-xs theme-text-muted">
                 {products.length} products
-                {currentSearchTerm && ` for "${currentSearchTerm}"`}
+                {wholesalerName && ` from ${wholesalerName}`}
+                {currentSearchTerm && wholesalerName && ' for '}
+                {currentSearchTerm && !wholesalerName && ' for '}
+                {currentSearchTerm && `"${currentSearchTerm}"`}
               </div>
               <button
                 onClick={() => setMobileFiltersOpen(true)}
@@ -517,6 +576,23 @@ const Products = () => {
                     </div>
                     <FilterChips />
                   </div>
+
+                  {/* Wholesaler Info (if filtered) */}
+                  {wholesalerName && (
+                    <div className="mb-3 p-2 bg-purple-50 dark:bg-purple-900/20 rounded border border-purple-100 dark:border-purple-800">
+                      <div className="flex items-center gap-2">
+                        <User className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+                        <div>
+                          <p className="text-xs font-medium text-purple-800 dark:text-purple-300">
+                            Viewing products from
+                          </p>
+                          <p className="text-sm font-semibold text-purple-900 dark:text-purple-200">
+                            {wholesalerName}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Category Filter */}
                   <div className="mb-3">
@@ -573,6 +649,7 @@ const Products = () => {
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs theme-text-muted flex items-center gap-1.5">
                 <span>Showing {products.length} products</span>
+                {wholesalerName && <span>from {wholesalerName}</span>}
                 {currentSearchTerm && <span>for "{currentSearchTerm}"</span>}
                 <span className="text-blue-600 font-medium">☎️ 0751808507</span>
               </div>
@@ -610,6 +687,23 @@ const Products = () => {
                             Clear All
                           </button>
                         </div>
+
+                        {/* Wholesaler Info (if filtered) */}
+                        {wholesalerName && (
+                          <div className="mb-2 p-1.5 bg-purple-50 dark:bg-purple-900/20 rounded border border-purple-100 dark:border-purple-800">
+                            <div className="flex items-center gap-1.5">
+                              <User className="h-3 w-3 text-purple-600 dark:text-purple-400" />
+                              <div>
+                                <p className="text-[10px] text-purple-800 dark:text-purple-300">
+                                  Products from
+                                </p>
+                                <p className="text-xs font-semibold text-purple-900 dark:text-purple-200 truncate">
+                                  {wholesalerName}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Category Filter */}
                         <div className="mb-2">
@@ -703,24 +797,35 @@ const Products = () => {
                 : 'grid-cols-1'
             }`}>
               {products.map(product => (
-                <ProductCard key={product._id} product={product} compact />
+                <ProductCard 
+                  key={product._id} 
+                  product={product} 
+                  compact 
+                  showWholesalerInfo={!wholesalerName} // Don't show wholesaler info if already filtered by wholesaler
+                />
               ))}
             </div>
           ) : (
             <div className="text-center py-6">
               <div className="text-gray-400 text-4xl mb-2">🔍</div>
               <h3 className="text-base font-semibold theme-text mb-1">
-                {currentSearchTerm ? `No products for "${currentSearchTerm}"` : 'No products found'}
+                {wholesalerName 
+                  ? `No products from ${wholesalerName}${currentSearchTerm ? ` for "${currentSearchTerm}"` : ''}`
+                  : currentSearchTerm ? `No products for "${currentSearchTerm}"` : 'No products found'}
               </h3>
               <p className="theme-text-muted text-xs mb-2">
-                {currentSearchTerm ? 'Try different search' : 'Adjust filters or'}
+                {wholesalerName && currentSearchTerm 
+                  ? 'Try a different search term' 
+                  : wholesalerName 
+                  ? `${wholesalerName} doesn't have products yet`
+                  : 'Adjust filters or'}
               </p>
               <div className="flex justify-center gap-1">
                 <button
                   onClick={clearFilters}
                   className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-xs"
                 >
-                  {currentSearchTerm ? 'Clear Search' : 'Clear Filters'}
+                  {wholesalerName ? 'View All Products' : currentSearchTerm ? 'Clear Search' : 'Clear Filters'}
                 </button>
                 <a 
                   href="tel:+256751808507" 
@@ -733,11 +838,15 @@ const Products = () => {
           )}
         </div>
 
-        {/* Hidden SEO content for crawlers - KEPT UNCHANGED */}
+        {/* Hidden SEO content for crawlers */}
         <div className="hidden" aria-hidden="true">
-          <h1>Electrical Products Uganda - Wholesale & Retail Prices</h1>
-          <h2>Kiwa General Electricals - Uganda's Electrical Superstore</h2>
-          <p>Browse our complete range of electrical and electronics products at wholesale prices. We supply generators, solar systems, wires, cables, switches, sockets, home appliances, industrial equipment, and all electrical supplies across Uganda. Call 0751808507 for bulk orders and free delivery in Kampala. Email: gogreenuganda70@gmail.com</p>
+          <h1>{wholesalerName ? `${wholesalerName}'s Electrical Products` : 'Electrical Products Uganda - Wholesale & Retail Prices'}</h1>
+          <h2>{wholesalerName ? `${wholesalerName} - Wholesale Electrical Supplier` : 'Kiwa General Electricals - Uganda\'s Electrical Superstore'}</h2>
+          <p>
+            {wholesalerName 
+              ? `Browse products from ${wholesalerName}, a trusted wholesale electrical supplier in Uganda. ${wholesalerName} offers generators, solar systems, wires, cables, switches, sockets, home appliances, industrial equipment, and all electrical supplies. Call 0751808507 for bulk orders and free delivery in Kampala. Email: gogreenuganda70@gmail.com`
+              : 'Browse our complete range of electrical and electronics products at wholesale prices. We supply generators, solar systems, wires, cables, switches, sockets, home appliances, industrial equipment, and all electrical supplies across Uganda. Call 0751808507 for bulk orders and free delivery in Kampala. Email: gogreenuganda70@gmail.com'}
+          </p>
           <h3>Categories Available:</h3>
           <ul>
             <li>Generators Uganda</li>

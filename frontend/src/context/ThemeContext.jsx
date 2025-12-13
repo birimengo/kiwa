@@ -12,16 +12,17 @@ export const useTheme = () => {
 
 export const ThemeProvider = ({ children }) => {
   const [currentTheme, setCurrentTheme] = useState(() => {
-    // Check localStorage first, then system preference, default to dark
+    // Check localStorage first
     const saved = localStorage.getItem('theme');
     if (saved) return JSON.parse(saved);
     
-    // Check system preference
+    // Check system preference - if dark mode, use dark, otherwise default to ocean
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
       return 'dark';
     }
     
-    return 'dark'; // Final fallback to dark
+    // Default to ocean theme
+    return 'ocean';
   });
 
   useEffect(() => {
@@ -42,7 +43,7 @@ export const ThemeProvider = ({ children }) => {
     
   }, [currentTheme]);
 
-  // Optional: Listen for system theme changes
+  // Listen for system theme changes
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     
@@ -50,7 +51,9 @@ export const ThemeProvider = ({ children }) => {
       // Only auto-switch if user hasn't explicitly chosen a theme
       const saved = localStorage.getItem('theme');
       if (!saved) {
-        setCurrentTheme(e.matches ? 'dark' : 'light');
+        // If system switches to dark mode, use dark theme
+        // If system switches to light mode, use ocean theme as default
+        setCurrentTheme(e.matches ? 'dark' : 'ocean');
       }
     };
     

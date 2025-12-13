@@ -324,17 +324,17 @@ const CreateSaleTab = ({
         } else {
           newSelectedProducts.push({
             productId: product._id,
-            name: product.name,
-            brand: product.brand,
+            name: product.name || 'Unknown Product',
+            brand: product.brand || 'Unknown Brand',
             category: product.category,
-            unitPrice: product.sellingPrice,
-            originalPrice: product.sellingPrice,
+            unitPrice: product.sellingPrice || 0,
+            originalPrice: product.sellingPrice || 0,
             unitCost: product.purchasePrice || 0,
             quantity: 1,
             stock: product.stock,
             maxQuantity: product.stock,
             useCustomPrice: false,
-            customPrice: product.sellingPrice,
+            customPrice: product.sellingPrice || 0,
             discountPercent: 0,
             isLocal: product.isLocal || false
           });
@@ -391,17 +391,17 @@ const CreateSaleTab = ({
         ...prev,
         {
           productId: product._id,
-          name: product.name,
-          brand: product.brand,
+          name: product.name || 'Unknown Product',
+          brand: product.brand || 'Unknown Brand',
           category: product.category,
-          unitPrice: product.sellingPrice,
-          originalPrice: product.sellingPrice,
+          unitPrice: product.sellingPrice || 0,
+          originalPrice: product.sellingPrice || 0,
           unitCost: product.purchasePrice || 0,
           quantity: 1,
           stock: product.stock,
           maxQuantity: product.stock,
           useCustomPrice: false,
-          customPrice: product.sellingPrice,
+          customPrice: product.sellingPrice || 0,
           discountPercent: 0,
           isLocal: product.isLocal || false
         }
@@ -775,7 +775,7 @@ const CreateSaleTab = ({
     console.log(`✅ Cache refresh completed. Cleared ${clearedCount} entries.`);
   }, [selectedProducts, onProductsRefresh, clearProductCache, debugStockUpdate]);
 
-  // Enhanced handleCreateSale for real-time updates - FIXED infinite loops
+  // Enhanced handleCreateSale for real-time updates - FIXED
   const handleCreateSale = async () => {
     if (selectedProducts.length === 0) {
       setError('Add at least one product to the sale');
@@ -807,36 +807,55 @@ const CreateSaleTab = ({
         location: ''
       };
 
+      // ✅ FIXED: Build sale items with correct field names for backend
+      const saleItems = selectedProducts.map(item => {
+        const product = products.find(p => p._id === item.productId);
+        
+        // Build item with EXACT field names that backend expects
+        const saleItem = {
+          productId: item.productId,  // Backend will map this to 'product' field
+          name: item.name || product?.name || 'Unknown Product',
+          brand: item.brand || product?.brand || 'Unknown Brand',
+          sellingPrice: item.unitPrice || 0,
+          purchasePrice: item.unitCost || 0,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice || 0,
+          unitCost: item.unitCost || 0,
+          originalPrice: item.originalPrice || 0,
+          discountPercent: item.discountPercent || 0
+        };
+
+        return saleItem;
+      });
+
+      // ✅ FIXED: Build sale data with correct structure
       const saleData = {
         customer: customerData,
-        items: selectedProducts.map(item => ({
-          productId: item.productId,
-          productName: item.name,
-          productBrand: item.brand,
-          productCategory: item.category,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          unitCost: item.unitCost,
-          originalPrice: item.originalPrice,
-          usedCustomPrice: item.useCustomPrice,
-          discountPercent: item.discountPercent || 0,
-          isLocalProduct: item.isLocal || false
-        })),
+        items: saleItems,
         subtotal: totals.subtotal,
         totalCost: totals.totalCost,
         totalProfit: totals.totalProfit,
         totalAmount: totals.totalAmount,
-        totalDiscount: totals.totalDiscount,
+        discountAmount: totals.totalDiscount || 0,
+        taxAmount: 0,  // Add if you have tax
         paymentMethod: saleDetails.paymentMethod,
         amountPaid: saleDetails.amountPaid,
         notes: saleDetails.notes,
-        soldBy: user?.id || user?.name || 'local_admin'
+        // Backend will automatically set soldBy from the authenticated user
+        soldBy: user?.id || user?._id || 'local_admin'
       };
 
       console.log('🛒 Creating sale with data:', {
-        items: selectedProducts.map(p => `${p.name} x${p.quantity}`),
+        items: saleItems.map(p => ({
+          name: p.name,
+          brand: p.brand,
+          sellingPrice: p.sellingPrice,
+          quantity: p.quantity,
+          productId: p.productId
+        })),
         totalAmount: totals.totalAmount,
-        totalProfit: totals.totalProfit
+        totalProfit: totals.totalProfit,
+        soldBy: saleData.soldBy
       });
 
       if (!isOnline) {
@@ -1058,30 +1077,37 @@ const CreateSaleTab = ({
             location: ''
           };
 
-          const saleData = {
+          // Build sale items for offline fallback
+          const fallbackSaleItems = selectedProducts.map(item => ({
+            productId: item.productId,
+            name: item.name || 'Unknown Product',
+            brand: item.brand || 'Unknown Brand',
+            sellingPrice: item.unitPrice || 0,
+            purchasePrice: item.unitCost || 0,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice || 0,
+            unitCost: item.unitCost || 0,
+            originalPrice: item.originalPrice || 0,
+            discountPercent: item.discountPercent || 0
+          }));
+
+          const fallbackSaleData = {
             customer: customerData,
-            items: selectedProducts.map(item => ({
-              productId: item.productId,
-              productName: item.name,
-              productBrand: item.brand,
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              unitCost: item.unitCost,
-              originalPrice: item.originalPrice,
-              usedCustomPrice: item.useCustomPrice
-            })),
+            items: fallbackSaleItems,
             subtotal: totals.subtotal,
             totalCost: totals.totalCost,
             totalProfit: totals.totalProfit,
             totalAmount: totals.totalAmount,
+            discountAmount: totals.totalDiscount || 0,
+            taxAmount: 0,
             paymentMethod: saleDetails.paymentMethod,
             amountPaid: saleDetails.amountPaid,
             notes: saleDetails.notes,
-            soldBy: user?.id || user?.name || 'local_admin'
+            soldBy: user?.id || user?._id || 'local_admin'
           };
 
           const offlineSale = LocalStorageService.addOfflineSale({
-            ...saleData,
+            ...fallbackSaleData,
             syncError: true,
             errorMessage: error.message
           });
@@ -1118,6 +1144,9 @@ const CreateSaleTab = ({
                 type: 'sale_created_offline_fallback'
               }
             }));
+            
+            // Reset form
+            resetForm();
           }
         } catch (offlineError) {
           setError(`Failed to save sale: ${offlineError.message}`);
@@ -1256,36 +1285,6 @@ const CreateSaleTab = ({
       )}
     </div>
   );
-
-  // Floating add button for mobile
-  const FloatingAddButton = () => {
-    if (!mobileView || workflowStep !== 'select' || markedProducts.size === 0) return null;
-    
-    return (
-      <button
-        onClick={addMarkedProductsToSale}
-        className="fixed bottom-4 right-4 bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-full shadow-lg z-30 transition-all duration-200"
-        title={`Add ${markedProducts.size} item${markedProducts.size !== 1 ? 's' : ''} to sale`}
-      >
-        <Check className="h-4 w-4" />
-      </button>
-    );
-  };
-
-  // Compact mobile floating review button
-  const FloatingReviewButton = () => {
-    if (!mobileView || workflowStep !== 'review' || selectedProducts.length === 0) return null;
-    
-    return (
-      <button
-        onClick={goToSaleDetails}
-        className="fixed bottom-4 right-4 bg-green-600 hover:bg-green-700 text-white p-2 rounded-full shadow-lg z-30 transition-all duration-200"
-        title="Proceed to sale details"
-      >
-        <ChevronRight className="h-4 w-4" />
-      </button>
-    );
-  };
 
   return (
     <div className="space-y-2 p-1 md:space-y-4 md:p-2">
@@ -1441,7 +1440,7 @@ const CreateSaleTab = ({
                         <div className="flex-1 min-w-0 pr-1">
                           <div className="flex items-center gap-1">
                             <h4 className="font-medium theme-text text-xs truncate">
-                              {product.name}
+                              {product.name || 'Unnamed Product'}
                             </h4>
                             {product.isLocal && (
                               <span className="inline-flex items-center px-1 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
@@ -1451,7 +1450,7 @@ const CreateSaleTab = ({
                           </div>
                           <div className="flex items-center justify-between mt-1">
                             <span className="font-semibold text-blue-600 dark:text-blue-400 text-xs">
-                              UGX {product.sellingPrice?.toLocaleString()}
+                              UGX {(product.sellingPrice || 0).toLocaleString()}
                             </span>
                             <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
                               isOutOfStock
@@ -1597,12 +1596,12 @@ const CreateSaleTab = ({
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1">
                               <h4 className="font-medium theme-text text-xs truncate">
-                                {item.name}
+                                {item.name || 'Unknown Product'}
                               </h4>
                             </div>
                             <div className="flex items-center justify-between mt-1">
                               <span className="text-[10px] theme-text-muted">
-                                UGX {item.unitPrice?.toLocaleString()}
+                                UGX {(item.unitPrice || 0).toLocaleString()}
                               </span>
                               <button
                                 onClick={() => removeProductFromSale(item.productId)}
@@ -1627,7 +1626,7 @@ const CreateSaleTab = ({
                           <div className="flex items-center justify-between text-[10px]">
                             <span className="theme-text-muted">Cost:</span>
                             <span className="font-medium theme-text">
-                              UGX {item.unitCost?.toLocaleString()}
+                              UGX {(item.unitCost || 0).toLocaleString()}
                             </span>
                           </div>
                           
@@ -1642,7 +1641,7 @@ const CreateSaleTab = ({
                               <span className="theme-text">Original:</span>
                             </label>
                             <span className="font-semibold text-blue-600 dark:text-blue-400 text-xs">
-                              UGX {item.originalPrice?.toLocaleString()}
+                              UGX {(item.originalPrice || 0).toLocaleString()}
                             </span>
                           </div>
 
@@ -1687,7 +1686,7 @@ const CreateSaleTab = ({
                             ) : (
                               <div className="flex items-center gap-1">
                                 <span className="font-semibold text-blue-600 dark:text-blue-400 text-xs">
-                                  UGX {item.customPrice?.toLocaleString()}
+                                  UGX {(item.customPrice || 0).toLocaleString()}
                                 </span>
                                 <button
                                   onClick={() => startEditingPrice(item.productId, item.customPrice)}
@@ -1752,7 +1751,7 @@ const CreateSaleTab = ({
                           
                           <div className="text-right">
                             <span className="font-bold text-blue-600 dark:text-blue-400 text-xs">
-                              UGX {(item.unitPrice * item.quantity).toLocaleString()}
+                              UGX {((item.unitPrice || 0) * item.quantity).toLocaleString()}
                             </span>
                           </div>
                         </div>

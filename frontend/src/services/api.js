@@ -1,5 +1,7 @@
+// api.js - Enhanced API Configuration and Utilities
 import axios from 'axios';
 
+// ==================== ENVIRONMENT CONFIGURATION ====================
 // USE ENVIRONMENT VARIABLE - This will work for both dev and production
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://kiwa-8lrz.onrender.com/api';
 
@@ -14,6 +16,42 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+// ==================== PRODUCT FILTERING HELPER ====================
+// Filter products by wholesaler ID (client-side filtering)
+export const filterProductsByWholesaler = (products, wholesalerId) => {
+  if (!wholesalerId || !products || !Array.isArray(products)) return [];
+  
+  console.log(`🔍 Filtering ${products.length} products for wholesaler: ${wholesalerId}`);
+  
+  return products.filter(product => {
+    // Log product structure for debugging
+    console.log(`Product: ${product.name}`, {
+      createdBy: product.createdBy,
+      createdById: product.createdBy?._id || product.createdBy,
+      createdByString: JSON.stringify(product.createdBy)
+    });
+    
+    // Try different ways to get creator ID
+    let creatorId;
+    
+    if (typeof product.createdBy === 'string') {
+      creatorId = product.createdBy;
+    } else if (product.createdBy && typeof product.createdBy === 'object') {
+      creatorId = product.createdBy._id || product.createdBy.id || product.createdBy;
+    } else {
+      creatorId = product.createdBy;
+    }
+    
+    const matches = creatorId === wholesalerId;
+    
+    if (matches) {
+      console.log(`✅ Product "${product.name}" matches wholesaler ${wholesalerId}`);
+    }
+    
+    return matches;
+  });
+};
 
 // ==================== USER CONTEXT HELPER ====================
 const getUserContext = () => {
@@ -60,7 +98,8 @@ const addUserFilterToParams = (params = {}, endpointType = 'products') => {
     'sales': 'soldBy',
     'orders': 'customer.user',
     'analytics': 'soldBy',
-    'dashboard': 'user'
+    'dashboard': 'user',
+    'wholesalers': 'createdBy'
   };
   
   const userField = userFieldMap[endpointType] || 'createdBy';
@@ -74,19 +113,18 @@ const addUserFilterToParams = (params = {}, endpointType = 'products') => {
   else if (user.role === 'admin') {
     // Check if it's a personal view request
     const isPersonalView = (
-      params.view === 'my' ||
+      params.view === 'my-products' ||
+      params.view === 'my-processed' ||
       params.soldBy === 'me' ||
       params.createdBy === 'me' ||
       params.filter === 'my' ||
       (endpointType === 'products' && params.createdBy) ||
-      (endpointType === 'sales' && params.soldBy)
+      (endpointType === 'sales' && params.soldBy) ||
+      (endpointType === 'wholesalers' && params.view === 'my')
     );
     
     if (isPersonalView) {
       finalParams[userField] = user._id;
-      if (params.view === 'my') {
-        finalParams.view = 'my';
-      }
     }
   }
   
@@ -115,7 +153,6 @@ const getAnalyticsEndpoint = (viewType = 'auto') => {
   }
   
   // Admin users default to system view unless specified otherwise
-  // You can store view preference in localStorage
   const preferredView = localStorage.getItem('analyticsView') || 'system';
   return preferredView === 'personal' ? 'user' : '';
 };
@@ -174,6 +211,8 @@ api.interceptors.response.use(
         window.location.href = '/login';
       }
       userMessage = 'Session expired. Please login again.';
+    } else if (error.response.status === 403) {
+      userMessage = 'Access forbidden. You do not have permission to access this resource.';
     } else if (error.response.status === 404) {
       userMessage = 'Requested resource not found.';
     } else if (error.response.status >= 500) {
@@ -312,6 +351,22 @@ export const productsAPI = {
     return api.get(`/products/admin/my-products${queryString}`);
   },
   
+  // ================ NEW WHOLESALER PRODUCTS ENDPOINTS ================
+  // Get products by specific wholesaler ID (public endpoint)
+  getProductsByWholesaler: (wholesalerId, params = {}) => {
+    validateId(wholesalerId, 'Wholesaler');
+    const queryString = createQueryString(params);
+    return api.get(`/products/wholesaler/${wholesalerId}${queryString}`);
+  },
+  
+  // Fallback method: Get products with createdBy filter
+  getProductsByCreator: (creatorId, params = {}) => {
+    validateId(creatorId, 'Creator');
+    const queryParams = { ...params, createdBy: creatorId };
+    const queryString = createQueryString(queryParams);
+    return api.get(`/products${queryString}`);
+  },
+  
   // Product-specific methods
   likeProduct: (id) => {
     validateId(id, 'Product');
@@ -391,25 +446,55 @@ const salesConfig = {
 const baseSalesAPI = createApiMethods('sales', salesConfig);
 
 export const salesAPI = {
-  // Keep original method names
-  getSales: baseSalesAPI.getAll,
-  getSale: baseSalesAPI.get,
-  createSale: baseProductsAPI.create,
-  updateSale: baseSalesAPI.update,
-  deleteSale: baseSalesAPI.delete,
+  // ==================== GET SALES METHODS ====================
   
-  // ADMIN-SPECIFIC ENDPOINTS
-  getAdminSales: (params = {}) => {
-    const queryString = createQueryString({ ...params, view: 'my' });
+  // Get sales with automatic user filtering
+  getSales: (params = {}) => {
+    const user = getUserContext();
+    const queryParams = { ...params };
+    
+    // For non-admin users: Always use personal endpoint
+    if (user?.role !== 'admin') {
+      queryParams.view = 'my';
+      console.log(`👤 [salesAPI.getSales] Non-admin user - using personal view`);
+    } 
+    // For admin users: Check if they want personal view
+    else if (user?.role === 'admin') {
+      // Check if personal view is requested
+      const isPersonalView = queryParams.view === 'my' || params.view === 'my';
+      if (isPersonalView) {
+        console.log(`👑 [salesAPI.getSales] Admin personal view requested`);
+      } else {
+        console.log(`👑 [salesAPI.getSales] Admin system view - seeing all sales`);
+      }
+    }
+    
+    const queryString = createQueryString(queryParams);
     return api.get(`/sales${queryString}`);
   },
   
-  getAdminSalesStats: (params = {}) => {
-    const queryString = createQueryString({ ...params, view: 'my' });
-    return api.get(`/sales/stats${queryString}`);
+  // Get user's personal sales (explicit personal endpoint)
+  getMySales: (params = {}) => {
+    const queryParams = { ...params, view: 'my' };
+    const queryString = createQueryString(queryParams);
+    console.log(`👤 [salesAPI.getMySales] Getting personal sales`);
+    return api.get(`/sales${queryString}`);
   },
   
-  // Sales-specific methods
+  // Get admin's personal sales (admin-specific personal endpoint)
+  getAdminSales: (params = {}) => {
+    const queryString = createQueryString(params);
+    console.log(`👑 [salesAPI.getAdminSales] Admin getting personal sales`);
+    return api.get(`/sales/admin/my-sales${queryString}`);
+  },
+  
+  // ==================== SINGLE SALE METHODS ====================
+  getSale: baseSalesAPI.get,
+  createSale: baseSalesAPI.create,
+  updateSale: baseSalesAPI.update,
+  deleteSale: baseSalesAPI.delete,
+  
+  // ==================== SALES-SPECIFIC METHODS ====================
   updatePayment: (id, paymentData) => {
     validateId(id, 'Sale');
     return api.put(`/sales/${id}/payment`, paymentData);
@@ -426,9 +511,35 @@ export const salesAPI = {
     return api.put(`/sales/${id}/resume`);
   },
   
+  // ==================== STATISTICS METHODS ====================
   getSalesStats: (params = {}) => {
-    const filteredParams = addUserFilterToParams(params, 'sales');
-    const queryString = createQueryString(filteredParams);
+    const user = getUserContext();
+    const queryParams = { ...params };
+    
+    // For non-admin users: Always use personal stats
+    if (user?.role !== 'admin') {
+      queryParams.view = 'my';
+    }
+    // For admin users: Only use personal stats if explicitly requested
+    else if (user?.role === 'admin') {
+      // Map view parameters for admin
+      if (queryParams.view === 'my-products' || queryParams.view === 'my-processed') {
+        // Keep the view as is
+      } else if (queryParams.view === 'my') {
+        queryParams.view = 'system';
+      } else {
+        queryParams.view = queryParams.view || 'system';
+      }
+    }
+    
+    const queryString = createQueryString(queryParams);
+    return api.get(`/sales/stats${queryString}`);
+  },
+  
+  // Get personal sales stats
+  getMySalesStats: (params = {}) => {
+    const queryParams = { ...params, view: 'my' };
+    const queryString = createQueryString(queryParams);
     return api.get(`/sales/stats${queryString}`);
   },
 
@@ -488,17 +599,61 @@ const ordersConfig = {
 const baseOrdersAPI = createApiMethods('orders', ordersConfig);
 
 export const ordersAPI = {
-  // Keep original method names for backward compatibility
-  getOrders: baseOrdersAPI.getAll,
+  // ==================== GET ORDERS METHODS ====================
+  getOrders: (params = {}) => {
+    const user = getUserContext();
+    const queryParams = { ...params };
+    
+    // For non-admin users: Always filter by their own orders
+    if (user?.role !== 'admin') {
+      return ordersAPI.getMyOrders(params);
+    }
+    // For admin users: Handle different view modes
+    else {
+      // Determine which endpoint to use based on view parameter
+      const view = queryParams.view || 'system';
+      
+      if (view === 'my-products') {
+        return ordersAPI.getAdminProductOrders(queryParams);
+      } else if (view === 'my-processed') {
+        return ordersAPI.getAdminProcessedOrders(queryParams); // ✅ FIXED
+      } else {
+        // System view - get all orders
+        const queryString = createQueryString(queryParams);
+        return api.get(`/orders${queryString}`);
+      }
+    }
+  },
+  
+  // ✅ ADDED: Admin processed orders endpoint
+  getAdminProcessedOrders: (params = {}) => {
+    const queryString = createQueryString(params);
+    console.log(`👑 [ordersAPI.getAdminProcessedOrders] Admin fetching processed orders`);
+    return api.get(`/orders/admin/my-processed${queryString}`);
+  },
+  
+  // Get single order
   getOrder: baseOrdersAPI.get,
+  
+  // Create new order
   createOrder: baseOrdersAPI.create,
+  
+  // Update order
   updateOrder: baseOrdersAPI.update,
+  
+  // Delete order
   deleteOrder: baseOrdersAPI.delete,
   
   // ADMIN-SPECIFIC ENDPOINTS
   getAdminOrders: (params = {}) => {
     const queryString = createQueryString(params);
-    return api.get(`/orders/admin/my-orders${queryString}`);
+    return api.get(`/orders/admin/my-processed${queryString}`);
+  },
+  
+  // Get admin's product-specific orders
+  getAdminProductOrders: (params = {}) => {
+    const queryString = createQueryString(params);
+    return api.get(`/orders/admin/my-products${queryString}`);
   },
   
   // Order-specific methods
@@ -542,23 +697,161 @@ export const ordersAPI = {
   
   // Order statistics
   getOrderStats: (params = {}) => {
-    const filteredParams = addUserFilterToParams({ ...params, view: 'my' }, 'orders');
-    const queryString = createQueryString(filteredParams);
+    const user = getUserContext();
+    const queryParams = { ...params };
+    
+    // For non-admin users: Always get personal stats
+    if (user?.role !== 'admin') {
+      queryParams.view = 'my';
+    }
+    // For admin users: Map view parameters correctly
+    else {
+      const view = queryParams.view || 'system';
+      
+      if (view === 'my-products' || view === 'my-processed') {
+        queryParams.view = view;
+      } else if (view === 'my') {
+        queryParams.view = 'system';
+      } else {
+        queryParams.view = 'system';
+      }
+    }
+    
+    // Remove any customer.user filter that might have been added automatically
+    delete queryParams['customer.user'];
+    
+    const queryString = createQueryString(queryParams);
     return api.get(`/orders/stats${queryString}`);
   },
   
   // Dashboard statistics
   getDashboardStats: () => {
     return api.get('/orders/dashboard/stats');
+  },
+  
+  // Helper method to get stats for specific view
+  getStatsForView: (view = 'system', period = 'month') => {
+    return ordersAPI.getOrderStats({ view, period });
+  }
+};
+
+// ==================== CONSOLIDATED ANALYTICS API ====================
+// Helper function for analytics fallback
+const fetchAnalyticsFallback = async (params) => {
+  const { period = 'week', limit = 8 } = params;
+  
+  try {
+    const [salesOverview, productAnalytics, inventoryAnalytics, performanceMetrics, productTracking] = await Promise.all([
+      api.get(`/analytics/user/sales-overview?period=${period}`),
+      api.get(`/analytics/user/product-analytics?period=${period}`),
+      api.get(`/analytics/user/inventory?period=${period}`),
+      api.get(`/analytics/user/performance?period=${period}`),
+      api.get(`/analytics/user/product-tracking?limit=${limit}`)
+    ]);
+    
+    const today = new Date().toISOString().split('T')[0];
+    let dailyPerformance;
+    try {
+      const response = await api.get(`/analytics/user/daily-performance?date=${today}`);
+      dailyPerformance = response.data;
+    } catch (error) {
+      dailyPerformance = {
+        performance: {
+          totalRevenue: 0,
+          totalProfit: 0,
+          totalSales: 0,
+          totalItemsSold: 0,
+          averageSaleValue: 0
+        }
+      };
+    }
+    
+    return {
+      success: true,
+      period,
+      salesOverview: salesOverview.data.overview || {
+        totalSales: 0,
+        totalRevenue: 0,
+        totalProfit: 0,
+        totalItemsSold: 0,
+        averageSale: 0
+      },
+      productAnalytics: productAnalytics.data.stats || {
+        totalProducts: 0,
+        totalValue: 0,
+        totalRevenue: 0,
+        totalCost: 0,
+        totalProfit: 0,
+        outOfStock: 0,
+        lowStock: 0
+      },
+      topProducts: productAnalytics.data.topProducts || [],
+      inventoryAnalytics: inventoryAnalytics.data.stats || {
+        totalProducts: 0,
+        totalStockValue: 0,
+        originalStockValue: 0,
+        restockedValue: 0,
+        averageStock: 0,
+        totalItems: 0
+      },
+      performanceMetrics: performanceMetrics.data.metrics || {
+        sales: {
+          totalRevenue: 0,
+          totalProfit: 0,
+          totalSales: 0,
+          averageSaleValue: 0,
+          averageProfitPerSale: 0
+        },
+        products: {
+          averageProfitMargin: 0
+        }
+      },
+      dailyPerformance,
+      productTracking: productTracking.data.products || []
+    };
+  } catch (error) {
+    console.error('Fallback analytics fetch failed:', error);
+    throw error;
   }
 };
 
 // ==================== ENHANCED ANALYTICS API ====================
 export const analyticsAPI = {
-  // ==================== SIMPLIFIED ANALYTICS API ====================
-  // Main analytics methods with automatic view detection
-  
-  // Sales Overview
+  getMyAnalytics: async (params = {}) => {
+    try {
+      const { period = 'week', limit = 8 } = params;
+      const user = getUserContext();
+      
+      let endpoint;
+      const queryString = createQueryString({ period, limit });
+      
+      if (user?.role === 'admin') {
+        const preferredView = localStorage.getItem('analyticsView') || 'system';
+        if (preferredView === 'personal') {
+          endpoint = `/analytics/user/my-analytics${queryString}`;
+        } else {
+          endpoint = `/analytics/my-analytics${queryString}`;
+        }
+      } else {
+        endpoint = `/analytics/user/my-analytics${queryString}`;
+      }
+      
+      console.log(`📊 Fetching analytics from: ${endpoint}`);
+      const response = await api.get(endpoint);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching consolidated analytics:', error);
+      
+      try {
+        console.log('🔄 Falling back to individual endpoints...');
+        return await fetchAnalyticsFallback(params);
+      } catch (fallbackError) {
+        console.error('Fallback also failed:', fallbackError);
+        throw error;
+      }
+    }
+  },
+
   getSalesOverview: (params = {}, viewType = 'auto') => {
     const filteredParams = addUserFilterToParams(params, 'analytics');
     const queryString = createQueryString(filteredParams);
@@ -566,7 +859,6 @@ export const analyticsAPI = {
     return api.get(`${endpoint}${queryString}`);
   },
   
-  // Product Analytics
   getProductAnalytics: (params = {}, viewType = 'auto') => {
     const filteredParams = addUserFilterToParams(params, 'products');
     const queryString = createQueryString(filteredParams);
@@ -574,7 +866,6 @@ export const analyticsAPI = {
     return api.get(`${endpoint}${queryString}`);
   },
   
-  // Inventory Analytics
   getInventoryAnalytics: (params = {}, viewType = 'auto') => {
     const filteredParams = addUserFilterToParams(params, 'products');
     const queryString = createQueryString(filteredParams);
@@ -582,7 +873,6 @@ export const analyticsAPI = {
     return api.get(`${endpoint}${queryString}`);
   },
   
-  // Performance Metrics
   getPerformanceMetrics: (params = {}, viewType = 'auto') => {
     const filteredParams = addUserFilterToParams(params, 'analytics');
     const queryString = createQueryString(filteredParams);
@@ -590,7 +880,6 @@ export const analyticsAPI = {
     return api.get(`${endpoint}${queryString}`);
   },
   
-  // Daily Performance
   getDailyPerformance: (params = {}, viewType = 'auto') => {
     const filteredParams = addUserFilterToParams(params, 'analytics');
     const queryString = createQueryString(filteredParams);
@@ -598,69 +887,12 @@ export const analyticsAPI = {
     return api.get(`${endpoint}${queryString}`);
   },
   
-  // Product Tracking
   getProductTracking: (params = {}, viewType = 'auto') => {
     const filteredParams = addUserFilterToParams(params, 'products');
     const queryString = createQueryString(filteredParams);
     const endpoint = buildAnalyticsEndpoint('product-tracking', viewType);
     return api.get(`${endpoint}${queryString}`);
   },
-  
-  // ==================== EXPLICIT VIEW METHODS ====================
-  // For when you want to explicitly specify the view
-  
-  // Personal View (user's own data only)
-  getPersonalSalesOverview: (params = {}) => {
-    return this.getSalesOverview(params, 'personal');
-  },
-  
-  getPersonalProductAnalytics: (params = {}) => {
-    return this.getProductAnalytics(params, 'personal');
-  },
-  
-  getPersonalInventoryAnalytics: (params = {}) => {
-    return this.getInventoryAnalytics(params, 'personal');
-  },
-  
-  getPersonalPerformanceMetrics: (params = {}) => {
-    return this.getPerformanceMetrics(params, 'personal');
-  },
-  
-  getPersonalDailyPerformance: (params = {}) => {
-    return this.getDailyPerformance(params, 'personal');
-  },
-  
-  getPersonalProductTracking: (params = {}) => {
-    return this.getProductTracking(params, 'personal');
-  },
-  
-  // System View (admin sees all data)
-  getSystemSalesOverview: (params = {}) => {
-    return this.getSalesOverview(params, 'system');
-  },
-  
-  getSystemProductAnalytics: (params = {}) => {
-    return this.getProductAnalytics(params, 'system');
-  },
-  
-  getSystemInventoryAnalytics: (params = {}) => {
-    return this.getInventoryAnalytics(params, 'system');
-  },
-  
-  getSystemPerformanceMetrics: (params = {}) => {
-    return this.getPerformanceMetrics(params, 'system');
-  },
-  
-  getSystemDailyPerformance: (params = {}) => {
-    return this.getDailyPerformance(params, 'system');
-  },
-  
-  getSystemProductTracking: (params = {}) => {
-    return this.getProductTracking(params, 'system');
-  },
-  
-  // ==================== VIEW MANAGEMENT ====================
-  // Helper to manage view preferences
   
   setAnalyticsView: (viewType) => {
     if (viewType !== 'personal' && viewType !== 'system') {
@@ -673,13 +905,11 @@ export const analyticsAPI = {
     return localStorage.getItem('analyticsView') || 'system';
   },
   
-  // Check if user is admin
   isAdminUser: () => {
     const user = getUserContext();
     return user?.role === 'admin';
   },
   
-  // Get current user info
   getCurrentUser: () => {
     return getUserContext();
   }
@@ -687,46 +917,38 @@ export const analyticsAPI = {
 
 // ==================== NOTIFICATION API ====================
 export const notificationsAPI = {
-  // Get all notifications
   getNotifications: (params = {}) => {
     const queryString = createQueryString(params);
     return api.get(`/notifications${queryString}`);
   },
   
-  // Get single notification
   getNotification: (id) => {
     validateId(id, 'Notification');
     return api.get(`/notifications/${id}`);
   },
   
-  // Delete notification
   deleteNotification: (id) => {
     validateId(id, 'Notification');
     return api.delete(`/notifications/${id}`);
   },
   
-  // Get unread count
   getUnreadCount: () => {
     return api.get('/notifications/unread-count');
   },
   
-  // Mark as read
   markAsRead: (id) => {
     validateId(id, 'Notification');
     return api.put(`/notifications/${id}/read`);
   },
   
-  // Mark all as read
   markAllAsRead: () => {
     return api.put('/notifications/read-all');
   },
   
-  // Clear all notifications
   clearAllNotifications: () => {
     return api.delete('/notifications');
   },
   
-  // Real-time polling helper
   pollNotifications: async (onNewNotifications, interval = 10000) => {
     const poll = async () => {
       try {
@@ -750,7 +972,6 @@ export const notificationsAPI = {
 
 // ==================== ENHANCED DASHBOARD API ====================
 export const dashboardAPI = {
-  // User dashboard (own data)
   getDashboardOverview: () => {
     return api.get('/dashboard/overview');
   },
@@ -765,7 +986,6 @@ export const dashboardAPI = {
     return api.get(`/dashboard/recent-activity${queryString}`);
   },
   
-  // ADMIN-SPECIFIC DASHBOARD ENDPOINTS
   getAdminDashboardOverview: () => {
     return api.get('/dashboard/admin/overview');
   },
@@ -783,30 +1003,25 @@ export const dashboardAPI = {
 
 // ==================== ADMIN API ====================
 export const adminAPI = {
-  // Create initial admin (unprotected)
   createAdmin: (adminData) => {
     validateRequiredFields(adminData, ['name', 'email', 'password']);
     return api.post('/admin/create-admin', adminData);
   },
   
-  // Register new admin (requires existing admin authentication)
   registerAdmin: (adminData) => {
     validateRequiredFields(adminData, ['name', 'email', 'password']);
     return api.post('/admin/register', adminData);
   },
   
-  // Get all admin users
   getAdmins: () => {
     return api.get('/admin/admins');
   },
   
-  // Get all users
   getUsers: (params = {}) => {
     const queryString = createQueryString(params);
     return api.get(`/admin/users${queryString}`);
   },
   
-  // Search users
   searchUsers: (query) => {
     if (!query || query.trim().length < 2) {
       throw new Error('Search query must be at least 2 characters long');
@@ -814,53 +1029,223 @@ export const adminAPI = {
     return api.get(`/admin/users/search?q=${encodeURIComponent(query)}`);
   },
   
-  // Get user by ID
   getUserById: (id) => {
     validateId(id, 'User');
     return api.get(`/admin/users/${id}`);
   },
   
-  // Get user activity
   getUserActivity: (id) => {
     validateId(id, 'User');
     return api.get(`/admin/users/${id}/activity`);
   },
   
-  // Update user role
   updateUserRole: (id, roleData) => {
     validateId(id, 'User');
     validateRequiredFields(roleData, ['role']);
     return api.put(`/admin/users/${id}/role`, roleData);
   },
   
-  // Toggle user status
   toggleUserStatus: (id, statusData) => {
     validateId(id, 'User');
     validateRequiredFields(statusData, ['isActive']);
     return api.put(`/admin/users/${id}/status`, statusData);
   },
   
-  // Reset user password
   resetUserPassword: (id, passwordData) => {
     validateId(id, 'User');
     validateRequiredFields(passwordData, ['newPassword']);
     return api.put(`/admin/users/${id}/reset-password`, passwordData);
   },
   
-  // Delete user (soft delete)
   deleteUser: (id) => {
     validateId(id, 'User');
     return api.delete(`/admin/users/${id}`);
   },
   
-  // Dashboard statistics
   getDashboardStats: () => {
     return api.get('/admin/dashboard');
   },
   
-  // Admin's personal dashboard statistics
   getMyDashboardStats: () => {
     return api.get('/admin/my-dashboard');
+  }
+};
+
+// ==================== WHOLESALERS API ====================
+export const wholesalersAPI = {
+  // Get all wholesalers (admins) - Public endpoint for customers
+  getWholesalers: (params = {}) => {
+    const queryString = createQueryString(params);
+    return api.get(`/wholesalers${queryString}`);
+  },
+  
+  // Get wholesaler by ID
+  getWholesalerById: (id) => {
+    validateId(id, 'Wholesaler');
+    return api.get(`/wholesalers/${id}`);
+  },
+  
+  // Search wholesalers by name or email
+  searchWholesalers: (query) => {
+    if (!query || query.trim().length < 2) {
+      throw new Error('Search query must be at least 2 characters long');
+    }
+    return api.get(`/wholesalers/search?q=${encodeURIComponent(query)}`);
+  },
+  
+  // Get wholesaler statistics
+  getWholesalerStats: () => {
+    return api.get('/wholesalers/stats');
+  },
+  
+  // Contact wholesaler (send message)
+  contactWholesaler: (wholesalerId, messageData) => {
+    validateId(wholesalerId, 'Wholesaler');
+    validateRequiredFields(messageData, ['subject', 'message']);
+    return api.post(`/wholesalers/${wholesalerId}/contact`, messageData);
+  }
+};
+
+// ==================== MOCK WHOLESALERS DATA (Fallback if API fails) ====================
+export const mockWholesalers = [
+  {
+    _id: '1',
+    name: 'Kiwa General Electricals',
+    email: 'gogreenuganda70@gmail.com',
+    phone: '+256 751 808 507',
+    role: 'admin',
+    isActive: true,
+    createdAt: '2024-01-01T00:00:00.000Z',
+    lastLogin: '2024-01-15T10:30:00.000Z',
+    avatar: '',
+    status: 'active'
+  },
+  {
+    _id: '2',
+    name: 'ElectroTech Supplies',
+    email: 'info@electrotech.ug',
+    phone: '+256 772 456 789',
+    role: 'admin',
+    isActive: true,
+    createdAt: '2024-01-05T00:00:00.000Z',
+    lastLogin: '2024-01-14T14:20:00.000Z',
+    avatar: '',
+    status: 'active'
+  },
+  {
+    _id: '3',
+    name: 'Power Solutions Ltd',
+    email: 'sales@powersolutions.ug',
+    phone: '+256 701 234 567',
+    role: 'admin',
+    isActive: true,
+    createdAt: '2024-01-10T00:00:00.000Z',
+    lastLogin: '2024-01-13T09:15:00.000Z',
+    avatar: '',
+    status: 'active'
+  },
+  {
+    _id: '4',
+    name: 'Sunshine Solar Systems',
+    email: 'contact@sunsol.ug',
+    phone: '+256 788 345 678',
+    role: 'admin',
+    isActive: true,
+    createdAt: '2024-01-08T00:00:00.000Z',
+    lastLogin: '2024-01-12T16:45:00.000Z',
+    avatar: '',
+    status: 'active'
+  }
+];
+
+// ==================== ENHANCED WHOLESALERS API WITH FALLBACK ====================
+export const enhancedWholesalersAPI = {
+  // Get wholesalers with automatic fallback to mock data
+  getWholesalers: async (params = {}) => {
+    try {
+      console.log('🔄 Fetching wholesalers from API...');
+      const response = await wholesalersAPI.getWholesalers(params);
+      return response;
+    } catch (error) {
+      console.warn('⚠️ API failed, using mock wholesalers data:', error.message);
+      
+      // Simulate API response with mock data
+      const mockResponse = {
+        data: {
+          success: true,
+          count: mockWholesalers.length,
+          wholesalers: mockWholesalers.filter(wholesaler => {
+            // Apply basic filtering on mock data
+            if (params.search) {
+              const searchTerm = params.search.toLowerCase();
+              return (
+                wholesaler.name.toLowerCase().includes(searchTerm) ||
+                wholesaler.email.toLowerCase().includes(searchTerm) ||
+                (wholesaler.phone && wholesaler.phone.includes(searchTerm))
+              );
+            }
+            return true;
+          })
+        }
+      };
+      
+      return mockResponse;
+    }
+  },
+  
+  // Get wholesaler by ID with fallback
+  getWholesalerById: async (id) => {
+    try {
+      const response = await wholesalersAPI.getWholesalerById(id);
+      return response;
+    } catch (error) {
+      console.warn('⚠️ API failed, searching in mock data...');
+      
+      const wholesaler = mockWholesalers.find(w => w._id === id);
+      if (wholesaler) {
+        return {
+          data: {
+            success: true,
+            wholesaler
+          }
+        };
+      }
+      
+      throw new Error(`Wholesaler with ID ${id} not found`);
+    }
+  },
+  
+  // Get wholesalers statistics
+  getStatistics: async () => {
+    try {
+      const response = await wholesalersAPI.getWholesalerStats();
+      return response;
+    } catch (error) {
+      console.warn('⚠️ API failed, generating mock statistics...');
+      
+      const activeWholesalers = mockWholesalers.filter(w => w.isActive);
+      const today = new Date();
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(today.getDate() - 30);
+      
+      const recentlyActive = mockWholesalers.filter(w => {
+        if (!w.lastLogin) return false;
+        const lastLogin = new Date(w.lastLogin);
+        return lastLogin > thirtyDaysAgo;
+      });
+      
+      return {
+        data: {
+          success: true,
+          stats: {
+            total: mockWholesalers.length,
+            active: activeWholesalers.length,
+            recentlyActive: recentlyActive.length,
+            inactive: mockWholesalers.length - activeWholesalers.length
+          }
+        }
+      };
+    }
   }
 };
 
@@ -900,9 +1285,17 @@ export const getApiStatus = async () => {
   };
 };
 
-// ==================== NEW HELPER FOR FRONTEND COMPONENTS ====================
 export const createUserFilteredParams = (params = {}, endpointType = 'products') => {
   return addUserFilterToParams(params, endpointType);
+};
+
+// ==================== NEW UTILITY FUNCTION ====================
+// Check if a specific product belongs to a specific wholesaler
+export const isProductFromWholesaler = (product, wholesalerId) => {
+  if (!product || !wholesalerId) return false;
+  
+  const productCreatorId = product.createdBy?._id || product.createdBy;
+  return productCreatorId === wholesalerId;
 };
 
 // Export configured axios instance

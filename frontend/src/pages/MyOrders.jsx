@@ -1,216 +1,279 @@
+// MyOrders.jsx - COMPACT RESPONSIVE VERSION with Theme Integration
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { 
   ShoppingBag, Clock, Truck, CheckCircle, XCircle, 
-  ArrowLeft, X, Check, AlertCircle,
-  Package, Calendar, ChevronLeft, ChevronRight
+  ArrowLeft, X, Check, AlertCircle, Package, Calendar,
+  Mail, Phone, MapPin, MessageCircle, User,
+  Eye, Download, Copy, CheckCheck,
+  CreditCard, Wallet, Receipt, DollarSign,
+  ChevronDown, ChevronUp, Star,
+  ShoppingCart, Share2, RefreshCw,
+  Image as ImageIcon, ChevronRight, ChevronLeft,
+  Filter, Search, MoreVertical
 } from 'lucide-react';
+import { ordersAPI } from '../services/api';
 
 const MyOrders = () => {
-  const { user, token, isLoggedIn, logout } = useAuth();
+  const { user, token, isLoggedIn } = useAuth();
   const { currentTheme } = useTheme();
   const navigate = useNavigate();
+  
   const [orders, setOrders] = useState([]);
   const [filteredOrders, setFilteredOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  
+  // Filters and search
   const [statusFilter, setStatusFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dateRange, setDateRange] = useState('all');
+  const [sortBy, setSortBy] = useState('newest');
+  const [expandedOrder, setExpandedOrder] = useState(null);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  
+  // Modals
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showOrderDetails, setShowOrderDetails] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [selectedProductImages, setSelectedProductImages] = useState([]);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  
+  // Form states
   const [confirmationNote, setConfirmationNote] = useState('');
   const [cancellationReason, setCancellationReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
-  const [imageIndices, setImageIndices] = useState({});
+  
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
+  const [totalOrders, setTotalOrders] = useState(0);
 
-  // Get API base URL from environment variables
-  const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://kiwa-8lrz.onrender.com/api';
-
-  // Theme-aware styling functions
-  const getThemeClasses = () => {
-    switch (currentTheme) {
-      case 'dark':
-        return {
-          bg: {
-            primary: 'bg-gray-900',
-            secondary: 'bg-gray-800',
-            tertiary: 'bg-gray-700',
-            light: 'bg-gray-50'
-          },
-          text: {
-            primary: 'text-white',
-            secondary: 'text-gray-300',
-            muted: 'text-gray-400'
-          },
-          border: 'border-gray-700',
-          surface: 'bg-gray-800',
-          hover: 'hover:bg-gray-700'
-        };
-      case 'ocean':
-        return {
-          bg: {
-            primary: 'bg-gradient-to-br from-cyan-50 to-blue-100',
-            secondary: 'bg-white',
-            tertiary: 'bg-blue-50',
-            light: 'bg-blue-50'
-          },
-          text: {
-            primary: 'text-gray-900',
-            secondary: 'text-gray-700',
-            muted: 'text-gray-500'
-          },
-          border: 'border-blue-200',
-          surface: 'bg-white',
-          hover: 'hover:bg-blue-50'
-        };
-      default: // light
-        return {
-          bg: {
-            primary: 'bg-gray-50',
-            secondary: 'bg-white',
-            tertiary: 'bg-gray-100',
-            light: 'bg-gray-50'
-          },
-          text: {
-            primary: 'text-gray-900',
-            secondary: 'text-gray-700',
-            muted: 'text-gray-500'
-          },
-          border: 'border-gray-200',
-          surface: 'bg-white',
-          hover: 'hover:bg-gray-50'
-        };
-    }
+  // Theme-aware CSS classes using same pattern as Products.jsx
+  const themeClasses = {
+    bg: 'theme-bg',
+    surface: 'theme-surface',
+    text: 'theme-text',
+    'text-muted': 'theme-text-muted',
+    border: 'theme-border',
+    'border-light': 'theme-border-light',
+    hover: 'hover:theme-hover',
+    card: 'theme-card',
+    input: 'theme-input'
   };
 
-  const themeClasses = getThemeClasses();
-
-  // Constants
-  const STATUS_FILTERS = [
-    { value: 'all', label: 'All', icon: Package, color: 'text-gray-600', bgColor: 'bg-gray-500' },
-    { value: 'pending', label: 'Pending', icon: Clock, color: 'text-yellow-600', bgColor: 'bg-yellow-500' },
-    { value: 'processing', label: 'Processing', icon: Truck, color: 'text-blue-600', bgColor: 'bg-blue-500' },
-    { value: 'delivered', label: 'Delivered', icon: Truck, color: 'text-purple-600', bgColor: 'bg-purple-500' },
-    { value: 'confirmed', label: 'Confirmed', icon: CheckCircle, color: 'text-green-600', bgColor: 'bg-green-500' },
-    { value: 'cancelled', label: 'Cancelled', icon: XCircle, color: 'text-red-600', bgColor: 'bg-red-500' }
-  ];
-
+  // Status configurations - COMPACT VERSION
   const STATUS_CONFIG = {
     pending: { 
       icon: Clock, 
       color: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-      iconColor: 'text-yellow-500'
-    },
-    processing: { 
-      icon: Truck, 
-      color: 'bg-blue-100 text-blue-800 border-blue-200',
-      iconColor: 'text-blue-500'
-    },
-    delivered: { 
-      icon: Truck, 
-      color: 'bg-purple-100 text-purple-800 border-purple-200',
-      iconColor: 'text-purple-500'
+      iconColor: 'text-yellow-500',
+      bg: 'bg-yellow-50',
+      label: 'Pending',
+      description: 'Awaiting confirmation'
     },
     confirmed: { 
       icon: CheckCircle, 
+      color: 'bg-blue-100 text-blue-800 border-blue-200',
+      iconColor: 'text-blue-500',
+      bg: 'bg-blue-50',
+      label: 'Confirmed',
+      description: 'Order confirmed'
+    },
+    processing: { 
+      icon: Truck, 
+      color: 'bg-purple-100 text-purple-800 border-purple-200',
+      iconColor: 'text-purple-500',
+      bg: 'bg-purple-50',
+      label: 'Processing',
+      description: 'Being prepared'
+    },
+    shipped: { 
+      icon: Truck, 
+      color: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+      iconColor: 'text-indigo-500',
+      bg: 'bg-indigo-50',
+      label: 'Shipped',
+      description: 'On the way'
+    },
+    delivered: { 
+      icon: Package, 
       color: 'bg-green-100 text-green-800 border-green-200',
-      iconColor: 'text-green-500'
+      iconColor: 'text-green-500',
+      bg: 'bg-green-50',
+      label: 'Delivered',
+      description: 'Delivered to you'
+    },
+    completed: { 
+      icon: CheckCheck, 
+      color: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+      iconColor: 'text-emerald-500',
+      bg: 'bg-emerald-50',
+      label: 'Completed',
+      description: 'Order completed'
     },
     cancelled: { 
       icon: XCircle, 
       color: 'bg-red-100 text-red-800 border-red-200',
-      iconColor: 'text-red-500'
+      iconColor: 'text-red-500',
+      bg: 'bg-red-50',
+      label: 'Cancelled',
+      description: 'Order cancelled'
     }
   };
 
-  // Utility functions
+  const STATUS_FILTERS = [
+    { value: 'all', label: 'All', icon: Package, count: 0 },
+    { value: 'pending', label: 'Pending', icon: Clock, count: 0 },
+    { value: 'confirmed', label: 'Confirmed', icon: CheckCircle, count: 0 },
+    { value: 'processing', label: 'Processing', icon: Truck, count: 0 },
+    { value: 'shipped', label: 'Shipped', icon: Truck, count: 0 },
+    { value: 'delivered', label: 'Delivered', icon: Package, count: 0 },
+    { value: 'completed', label: 'Completed', icon: CheckCheck, count: 0 }
+  ];
+
+  const DATE_RANGES = [
+    { value: 'all', label: 'All Time' },
+    { value: 'today', label: 'Today' },
+    { value: 'week', label: '7 Days' },
+    { value: 'month', label: '30 Days' },
+    { value: 'quarter', label: '3 Months' }
+  ];
+
+  const SORT_OPTIONS = [
+    { value: 'newest', label: 'Newest' },
+    { value: 'oldest', label: 'Oldest' },
+    { value: 'price-high', label: 'Price: High' },
+    { value: 'price-low', label: 'Price: Low' }
+  ];
+
+  // Utility functions - COMPACT VERSIONS
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-UG', {
-      style: 'currency',
-      currency: 'UGX',
-      minimumFractionDigits: 0,
-    }).format(amount);
+    if (!amount && amount !== 0) return 'UGX 0';
+    
+    if (amount >= 1000000) {
+      return `UGX ${(amount / 1000000).toFixed(1)}M`;
+    }
+    if (amount >= 1000) {
+      return `UGX ${(amount / 1000).toFixed(0)}K`;
+    }
+    
+    return `UGX ${amount.toLocaleString('en-UG', { minimumFractionDigits: 0 })}`;
   };
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
+  const formatDate = (dateString, format = 'short') => {
+    if (!dateString) return 'N/A';
+    
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return 'N/A';
+      
+      const now = new Date();
+      const diffTime = Math.abs(now - date);
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (format === 'relative') {
+        if (diffDays === 0) return 'Today';
+        if (diffDays === 1) return 'Yesterday';
+        if (diffDays < 7) return `${diffDays}d ago`;
+        if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+        if (diffDays < 365) return `${Math.floor(diffDays / 30)}m ago`;
+        return `${Math.floor(diffDays / 365)}y ago`;
+      }
+      
+      return date.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+      });
+    } catch (error) {
+      return 'N/A';
+    }
   };
 
   const getStatusConfig = (status) => {
-    return STATUS_CONFIG[status] || { 
-      icon: Clock, 
-      color: 'bg-gray-100 text-gray-800 border-gray-200',
-      iconColor: 'text-gray-500'
-    };
+    return STATUS_CONFIG[status] || STATUS_CONFIG.pending;
   };
 
-  const getCurrentFilter = () => {
-    return STATUS_FILTERS.find(filter => filter.value === statusFilter) || STATUS_FILTERS[0];
+  const getPaymentMethodIcon = (method) => {
+    if (!method) return CreditCard;
+    const methodLower = method.toLowerCase();
+    if (methodLower.includes('mobile') || methodLower === 'mtn' || methodLower === 'airtel') return Wallet;
+    if (methodLower.includes('cash')) return DollarSign;
+    return CreditCard;
   };
 
-  // Image navigation functions
-  const navigateImage = (orderId, direction) => {
-    setImageIndices(prev => {
-      const order = orders.find(o => o._id === orderId);
-      if (!order || !order.items || order.items.length === 0) return prev;
-      
-      const currentIndex = prev[orderId] || 0;
-      const totalImages = order.items.reduce((total, item) => total + (item.images?.length || 0), 0);
-      
-      let newIndex;
-      if (direction === 'next') {
-        newIndex = (currentIndex + 1) % totalImages;
-      } else {
-        newIndex = (currentIndex - 1 + totalImages) % totalImages;
-      }
-      
-      return { ...prev, [orderId]: newIndex };
-    });
+  const getPaymentMethodLabel = (method) => {
+    if (!method) return 'Unknown';
+    const methodLower = method.toLowerCase();
+    if (methodLower === 'card') return 'Card';
+    if (methodLower === 'mobile_money') return 'Mobile Money';
+    if (methodLower === 'mtn') return 'MTN';
+    if (methodLower === 'airtel') return 'Airtel';
+    if (methodLower.includes('cash')) return 'Cash';
+    if (methodLower.includes('bank')) return 'Bank';
+    return method;
   };
 
-  const getCurrentImage = (order) => {
-    if (!order || !order.items || order.items.length === 0) return null;
+  // IMAGE HANDLING FUNCTIONS - COMPACT
+  const getProductImage = (item) => {
+    if (item.images && item.images.length > 0) return item.images[0];
+    if (item.image) return item.image;
+    if (item.productImage) return item.productImage;
+    if (item.product?.images?.length > 0) return item.product.images[0];
     
-    const currentIndex = imageIndices[order._id] || 0;
-    let imageCount = 0;
+    // Fallback to initials-based image
+    const colors = ['ef4444', 'f59e0b', '10b981', '3b82f6', '8b5cf6', 'ec4899'];
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    const productName = item.productName || item.name || 'Product';
+    const initials = productName.substring(0, 2).toUpperCase();
     
-    for (const item of order.items) {
-      if (!item.images || item.images.length === 0) continue;
-      
-      for (let i = 0; i < item.images.length; i++) {
-        if (imageCount === currentIndex) {
-          return {
-            url: item.images[i],
-            productName: item.productName,
-            itemIndex: order.items.indexOf(item),
-            imageIndex: i
-          };
-        }
-        imageCount++;
-      }
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(initials)}&background=${color}&color=fff&size=300`;
+  };
+
+  const getAllProductImages = (item) => {
+    const images = [];
+    
+    if (item.images && Array.isArray(item.images)) {
+      item.images.forEach(img => img && typeof img === 'string' && img.trim() && images.push(img.trim()));
     }
     
-    return null;
+    if (item.image && typeof item.image === 'string' && item.image.trim()) images.push(item.image.trim());
+    if (item.productImage && typeof item.productImage === 'string' && item.productImage.trim()) images.push(item.productImage.trim());
+    
+    if (item.product?.images && Array.isArray(item.product.images)) {
+      item.product.images.forEach(img => img && typeof img === 'string' && img.trim() && images.push(img.trim()));
+    }
+    
+    const uniqueImages = [...new Set(images.filter(img => img && img.length > 0))];
+    return uniqueImages.length > 0 ? uniqueImages : [getProductImage(item)];
   };
 
-  // Filter orders based on status
-  useEffect(() => {
-    if (statusFilter === 'all') {
-      setFilteredOrders(orders);
-    } else {
-      setFilteredOrders(orders.filter(order => order.orderStatus === statusFilter));
-    }
-  }, [orders, statusFilter]);
+  const handleImageError = (e, item = null) => {
+    e.target.onerror = null;
+    const colors = ['ef4444', 'f59e0b', '10b981', '3b82f6', '8b5cf6', 'ec4899'];
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    const productName = item?.productName || item?.name || 'PD';
+    const initials = productName.substring(0, 2).toUpperCase();
+    e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(initials)}&background=${color}&color=fff&size=300`;
+  };
 
-  // Data fetching with proper authentication
+  const openImageGallery = (item) => {
+    const images = getAllProductImages(item);
+    setSelectedProductImages(images);
+    setCurrentImageIndex(0);
+    setShowImageModal(true);
+  };
+
+  const nextImage = () => setCurrentImageIndex(prev => prev < selectedProductImages.length - 1 ? prev + 1 : 0);
+  const prevImage = () => setCurrentImageIndex(prev => prev > 0 ? prev - 1 : selectedProductImages.length - 1);
+
   const fetchOrders = async () => {
-    // Check if user is properly authenticated
     if (!isLoggedIn || !token) {
       setError('Please login to view your orders');
       setLoading(false);
@@ -218,85 +281,143 @@ const MyOrders = () => {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/orders/my-orders`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      setLoading(true);
+      setError('');
       
-      if (!response.ok) {
-        if (response.status === 401) {
-          // Token is invalid, logout user
-          logout();
-          navigate('/login', { state: { from: '/my-orders' } });
-          throw new Error('Session expired. Please login again.');
-        }
-        throw new Error(`Failed to fetch orders: ${response.status}`);
-      }
+      const params = {
+        page: currentPage,
+        limit: itemsPerPage,
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+        search: searchQuery || undefined
+      };
+
+      const response = await ordersAPI.getMyOrders(params);
       
-      const result = await response.json();
-      if (result.success) {
-        setOrders(result.orders);
-        setError('');
+      if (response.data.success) {
+        const ordersData = response.data.orders || [];
+        
+        // Process orders with image handling
+        const enrichedOrders = ordersData.map(order => ({
+          ...order,
+          items: order.items?.map(item => ({
+            ...item,
+            productImage: getProductImage(item),
+            productImages: getAllProductImages(item),
+            productName: item.productName || item.name || 'Product',
+            quantity: item.quantity || 1,
+            unitPrice: item.unitPrice || item.price || 0,
+            totalPrice: item.totalPrice || (item.unitPrice || 0) * (item.quantity || 1)
+          })) || []
+        }));
+        
+        setOrders(enrichedOrders);
+        setFilteredOrders(enrichedOrders);
+        setTotalOrders(response.data.total || enrichedOrders.length);
+        
+        // Update status counts
+        updateStatusCounts(enrichedOrders);
       } else {
-        setError(result.message || 'Failed to fetch orders');
+        setError(response.data.message || 'Failed to fetch orders');
       }
     } catch (error) {
       console.error('Error fetching orders:', error);
-      setError(error.message || 'Failed to load orders. Please try again.');
+      setError(error.userMessage || error.message || 'Failed to load orders. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (isLoggedIn) {
-      fetchOrders();
-    } else {
-      setLoading(false);
-      setError('Please login to view your orders');
-    }
-  }, [isLoggedIn]);
+  const updateStatusCounts = (orders) => {
+    STATUS_FILTERS.forEach(filter => {
+      if (filter.value === 'all') {
+        filter.count = orders.length;
+      } else {
+        filter.count = orders.filter(order => order.orderStatus === filter.value).length;
+      }
+    });
+  };
 
-  // Order actions with proper authentication
+  // Apply filters
+  useEffect(() => {
+    let result = [...orders];
+
+    if (statusFilter !== 'all') {
+      result = result.filter(order => order.orderStatus === statusFilter);
+    }
+
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(order => {
+        if (order.orderNumber?.toLowerCase().includes(query)) return true;
+        if (order.items?.some(item => item.productName?.toLowerCase().includes(query))) return true;
+        return false;
+      });
+    }
+
+    if (dateRange !== 'all') {
+      const now = new Date();
+      const filterDate = new Date();
+      
+      switch (dateRange) {
+        case 'today': filterDate.setHours(0, 0, 0, 0); break;
+        case 'week': filterDate.setDate(now.getDate() - 7); break;
+        case 'month': filterDate.setMonth(now.getMonth() - 1); break;
+        case 'quarter': filterDate.setMonth(now.getMonth() - 3); break;
+        default: filterDate.setHours(0, 0, 0, 0);
+      }
+
+      result = result.filter(order => {
+        if (!order.createdAt) return true;
+        try {
+          return new Date(order.createdAt) >= filterDate;
+        } catch {
+          return true;
+        }
+      });
+    }
+
+    // Apply sorting
+    result.sort((a, b) => {
+      switch (sortBy) {
+        case 'price-high': return (b.totalAmount || 0) - (a.totalAmount || 0);
+        case 'price-low': return (a.totalAmount || 0) - (b.totalAmount || 0);
+        case 'oldest': 
+          try {
+            return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+          } catch { return 0; }
+        default: // newest
+          try {
+            return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+          } catch { return 0; }
+      }
+    });
+
+    setFilteredOrders(result);
+  }, [orders, statusFilter, searchQuery, dateRange, sortBy]);
+
   const handleConfirmDelivery = async () => {
     if (!selectedOrder || !confirmationNote.trim()) return;
     
     setActionLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/orders/${selectedOrder._id}/confirm-delivery`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ confirmationNote: confirmationNote.trim() })
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          logout();
-          navigate('/login', { state: { from: '/my-orders' } });
-          throw new Error('Session expired. Please login again.');
-        }
-        throw new Error(`Failed to confirm delivery: ${response.status}`);
-      }
+      const response = await ordersAPI.confirmDelivery(selectedOrder._id, confirmationNote);
       
-      const result = await response.json();
-      if (result.success) {
+      if (response.data.success) {
         setOrders(prev => prev.map(order => 
           order._id === selectedOrder._id 
-            ? { ...order, orderStatus: 'confirmed' }
+            ? { ...order, orderStatus: 'completed', updatedAt: new Date().toISOString() }
             : order
         ));
+        
+        setSuccess('Order delivery confirmed successfully!');
         closeModals();
-        setError('');
+        setTimeout(() => setSuccess(''), 3000);
       } else {
-        setError(result.message || 'Failed to confirm delivery');
+        setError(response.data.message || 'Failed to confirm delivery');
       }
     } catch (error) {
       console.error('Error confirming delivery:', error);
-      setError(error.message || 'Failed to confirm delivery');
+      setError(error.userMessage || 'Failed to confirm delivery');
     } finally {
       setActionLoading(false);
     }
@@ -307,45 +428,34 @@ const MyOrders = () => {
     
     setActionLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/orders/${selectedOrder._id}/cancel`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ reason: cancellationReason.trim() })
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          logout();
-          navigate('/login', { state: { from: '/my-orders' } });
-          throw new Error('Session expired. Please login again.');
-        }
-        throw new Error(`Failed to cancel order: ${response.status}`);
-      }
+      const response = await ordersAPI.cancelOrder(selectedOrder._id, cancellationReason);
       
-      const result = await response.json();
-      if (result.success) {
+      if (response.data.success) {
         setOrders(prev => prev.map(order => 
           order._id === selectedOrder._id 
-            ? { ...order, orderStatus: 'cancelled' }
+            ? { 
+                ...order, 
+                orderStatus: 'cancelled', 
+                updatedAt: new Date().toISOString(),
+                cancellationReason 
+              }
             : order
         ));
+        
+        setSuccess('Order cancelled successfully!');
         closeModals();
-        setError('');
+        setTimeout(() => setSuccess(''), 3000);
       } else {
-        setError(result.message || 'Failed to cancel order');
+        setError(response.data.message || 'Failed to cancel order');
       }
     } catch (error) {
       console.error('Error cancelling order:', error);
-      setError(error.message || 'Failed to cancel order');
+      setError(error.userMessage || 'Failed to cancel order');
     } finally {
       setActionLoading(false);
     }
   };
 
-  // Modal management
   const openConfirmModal = (order) => {
     setSelectedOrder(order);
     setConfirmationNote('');
@@ -360,206 +470,447 @@ const MyOrders = () => {
     setError('');
   };
 
+  const openOrderDetails = (order) => {
+    setSelectedOrder(order);
+    setShowOrderDetails(true);
+  };
+
   const closeModals = () => {
     setShowConfirmModal(false);
     setShowCancelModal(false);
+    setShowOrderDetails(false);
+    setShowImageModal(false);
+    setMobileFiltersOpen(false);
     setSelectedOrder(null);
+    setSelectedProductImages([]);
     setConfirmationNote('');
     setCancellationReason('');
     setError('');
   };
 
-  // Quick stats
-  const orderStats = {
-    total: orders.length,
-    pending: orders.filter(o => o.orderStatus === 'pending').length,
-    processing: orders.filter(o => o.orderStatus === 'processing').length,
-    delivered: orders.filter(o => o.orderStatus === 'delivered').length,
-    confirmed: orders.filter(o => o.orderStatus === 'confirmed').length,
-    cancelled: orders.filter(o => o.orderStatus === 'cancelled').length
+  const copyOrderNumber = (orderNumber) => {
+    navigator.clipboard.writeText(orderNumber);
+    setSuccess(`Order #${orderNumber} copied!`);
+    setTimeout(() => setSuccess(''), 2000);
   };
 
-  // Redirect to login if not authenticated
+  const shareOrder = async (order) => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Order ${order.orderNumber}`,
+          text: `Check out my order from Kiwa Electricals`,
+          url: window.location.href
+        });
+      } catch (error) {
+        copyOrderNumber(order.orderNumber);
+      }
+    } else {
+      copyOrderNumber(order.orderNumber);
+    }
+  };
+
+  const toggleOrderExpansion = (orderId) => {
+    setExpandedOrder(expandedOrder === orderId ? null : orderId);
+  };
+
+  const clearFilters = () => {
+    setStatusFilter('all');
+    setSearchQuery('');
+    setDateRange('all');
+    setSortBy('newest');
+    setMobileFiltersOpen(false);
+  };
+
+  const getActiveFiltersCount = () => {
+    let count = 0;
+    if (statusFilter !== 'all') count++;
+    if (searchQuery) count++;
+    if (dateRange !== 'all') count++;
+    return count;
+  };
+
+  useEffect(() => {
+    fetchOrders();
+  }, [currentPage, itemsPerPage]);
+
   if (!isLoggedIn) {
     return (
-      <div className={`min-h-screen ${themeClasses.bg.primary} flex items-center justify-center p-4`}>
+      <div className={`min-h-screen ${themeClasses.bg} flex items-center justify-center p-4`}>
         <div className="text-center max-w-md">
-          <ShoppingBag className={`h-12 w-12 ${themeClasses.text.muted} mx-auto mb-3`} />
-          <h2 className={`text-xl font-bold ${themeClasses.text.primary} mb-2`}>Please Login</h2>
-          <p className={`${themeClasses.text.muted} mb-4 text-sm`}>You need to be logged in to view your orders.</p>
-          <button
-            onClick={() => navigate('/login', { state: { from: '/my-orders' } })}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium text-sm transition-colors"
-          >
-            Login Now
-          </button>
+          <ShoppingBag className={`h-16 w-16 ${themeClasses['text-muted']} mx-auto mb-4`} />
+          <h2 className={`text-2xl font-bold ${themeClasses.text} mb-3`}>Access Your Orders</h2>
+          <p className={`${themeClasses['text-muted']} mb-6`}>
+            Please login to view your order history and manage purchases.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <button
+              onClick={() => navigate('/login', { state: { from: '/my-orders' } })}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+            >
+              Login to View Orders
+            </button>
+            <button
+              onClick={() => navigate('/products')}
+              className="border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 px-6 py-3 rounded-lg font-medium transition-colors"
+            >
+              Continue Shopping
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  // Loading state
-  if (loading) {
+  if (loading && orders.length === 0) {
     return (
-      <div className={`min-h-screen ${themeClasses.bg.primary} flex items-center justify-center p-4`}>
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-3"></div>
-          <p className={`${themeClasses.text.secondary} text-sm`}>Loading your orders...</p>
+      <div className={`min-h-screen ${themeClasses.bg} py-8`}>
+        <div className="max-w-7xl mx-auto px-3 sm:px-4">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <h2 className={`text-lg font-semibold ${themeClasses.text} mb-2`}>Loading Your Orders</h2>
+            <p className={themeClasses['text-muted']}>Fetching your order history...</p>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className={`min-h-screen ${themeClasses.bg.primary} py-4`}>
-      <div className="max-w-7xl mx-auto px-3 sm:px-4">
+    <div className={`min-h-screen ${themeClasses.bg} py-2 md:py-4`}>
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6">
         
-        {/* Header Section */}
-        <div className={`${themeClasses.surface} rounded-xl shadow border ${themeClasses.border} overflow-hidden mb-4`}>
-          <div className={`p-4 border-b ${themeClasses.border}`}>
-            {/* Navigation */}
-            <div className="flex items-center justify-between mb-3">
-              <Link
-                to="/products"
-                className="flex items-center gap-2 text-blue-600 hover:text-blue-700 text-sm transition-colors"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                <span className="hidden sm:inline">Back to Shopping</span>
-                <span className="sm:hidden">Back</span>
-              </Link>
-              
-              <div className={`text-xs ${themeClasses.text.muted}`}>
-                {filteredOrders.length} of {orders.length} orders
-              </div>
-            </div>
-
-            {/* Title and Filter Buttons */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 rounded-lg">
-                  <ShoppingBag className="h-5 w-5 text-blue-600" />
-                </div>
-                <div>
-                  <h1 className={`text-xl font-bold ${themeClasses.text.primary}`}>My Orders</h1>
-                  <p className={`${themeClasses.text.muted} text-sm`}>Manage and track your purchases</p>
-                </div>
-              </div>
-
-              {/* Filter Buttons */}
-              <div className="flex flex-wrap gap-2">
-                {STATUS_FILTERS.map((filter) => {
-                  const Icon = filter.icon;
-                  const isActive = statusFilter === filter.value;
-                  return (
-                    <button
-                      key={filter.value}
-                      onClick={() => setStatusFilter(filter.value)}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                        isActive
-                          ? `${filter.bgColor} text-white shadow-md`
-                          : `${themeClasses.text.secondary} ${themeClasses.hover} border ${themeClasses.border}`
-                      }`}
-                    >
-                      <Icon className={`h-3 w-3 ${isActive ? 'text-white' : filter.color}`} />
-                      <span>{filter.label}</span>
-                      {isActive && (
-                        <div className="ml-1 w-2 h-2 bg-white rounded-full"></div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {/* Current Filter Display */}
-          <div className={`px-4 py-2 border-b ${themeClasses.border} ${themeClasses.bg.tertiary}`}>
-            <div className="flex items-center gap-2">
-              <span className={`text-xs ${themeClasses.text.muted} font-medium`}>Showing:</span>
-              <div className={`flex items-center gap-1 px-2 py-1 ${themeClasses.bg.secondary} rounded border ${themeClasses.border}`}>
-                {(() => {
-                  const currentFilter = getCurrentFilter();
-                  const Icon = currentFilter.icon;
-                  return (
-                    <>
-                      <Icon className={`h-3 w-3 ${currentFilter.color}`} />
-                      <span className={`text-xs ${themeClasses.text.secondary} font-medium`}>{currentFilter.label}</span>
-                    </>
-                  );
-                })()}
-              </div>
-              <span className={`text-xs ${themeClasses.text.muted}`}>
-                • {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Error Display */}
-        {error && (
-          <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4" />
-              {error}
+        {/* Success/Error Messages - COMPACT */}
+        {success && (
+          <div className="mb-3 p-2 bg-green-100 border border-green-400 text-green-700 rounded-lg">
+            <div className="flex items-center gap-1.5">
+              <CheckCircle className="h-3.5 w-3.5" />
+              <span className="text-sm">{success}</span>
               <button 
-                onClick={() => setError('')}
-                className="ml-auto text-red-700 hover:text-red-800"
+                onClick={() => setSuccess('')}
+                className="ml-auto text-green-700 hover:text-green-800"
               >
-                <X className="h-4 w-4" />
+                <X className="h-3.5 w-3.5" />
               </button>
             </div>
           </div>
         )}
 
-        {/* Orders Grid */}
-        <div className={`${themeClasses.surface} rounded-xl shadow border ${themeClasses.border} overflow-hidden`}>
-          <div className="p-4">
-            {filteredOrders.length === 0 ? (
-              <EmptyState 
-                statusFilter={statusFilter} 
-                ordersCount={orders.length}
-                currentFilter={getCurrentFilter()}
-                themeClasses={themeClasses}
-              />
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredOrders.map((order) => (
-                  <OrderCard
-                    key={order._id}
-                    order={order}
-                    onConfirmDelivery={openConfirmModal}
-                    onCancelOrder={openCancelModal}
-                    formatCurrency={formatCurrency}
-                    formatDate={formatDate}
-                    getStatusConfig={getStatusConfig}
-                    themeClasses={themeClasses}
-                    getCurrentImage={getCurrentImage}
-                    navigateImage={navigateImage}
-                    imageIndex={imageIndices[order._id] || 0}
-                  />
-                ))}
+        {error && (
+          <div className="mb-3 p-2 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+            <div className="flex items-center gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5" />
+              <span className="text-sm">{error}</span>
+              <button 
+                onClick={() => setError('')}
+                className="ml-auto text-red-700 hover:text-red-800"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Header Section - ULTRA COMPACT */}
+        <div className={`${themeClasses.surface} shadow-xs ${themeClasses.border} border-b`}>
+          <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-1.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+              <div className="flex items-center">
+                <button
+                  onClick={() => navigate('/products')}
+                  className="flex items-center gap-1 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 mr-2"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  <span className="text-xs hidden sm:inline">Back</span>
+                </button>
+                
+                <div className="p-1.5 bg-blue-100 dark:bg-blue-900 rounded">
+                  <ShoppingBag className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                </div>
+                
+                <div className="ml-2">
+                  <h1 className="text-base font-bold theme-text">
+                    My Orders
+                    <span className="text-xs font-normal theme-text-muted ml-1.5">
+                      {orders.length} orders
+                    </span>
+                  </h1>
+                </div>
               </div>
+
+              <div className="flex items-center gap-1.5">
+                <div className="text-xs theme-text-muted">
+                  <span className="font-medium">{orders.length}</span> total
+                </div>
+                <button
+                  onClick={fetchOrders}
+                  className="flex items-center gap-1 px-2 py-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded text-xs transition-colors"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  <span className="hidden sm:inline">Refresh</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Search Bar - COMPACT */}
+        <div className="mb-3">
+          <div className="relative max-w-2xl mx-auto">
+            <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 theme-text-muted" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search orders or products..."
+              className="w-full pl-9 pr-4 py-1.5 text-sm theme-border border rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 theme-surface theme-text"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             )}
           </div>
         </div>
 
-        {/* Quick Stats */}
-        {orders.length > 0 && (
-          <div className="mt-4 text-center">
-            <div className={`inline-flex flex-wrap items-center justify-center gap-3 ${themeClasses.text.muted} text-xs`}>
-              <span className="flex items-center gap-1">
-                <Package className="h-3 w-3" />
-                Total: {orderStats.total}
-              </span>
-              {Object.entries(orderStats).map(([key, count]) => 
-                key !== 'total' && count > 0 && (
-                  <span key={key} className="flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
-                    {key}: {count}
-                  </span>
-                )
-              )}
+        {/* Mobile Filter Toggle - COMPACT */}
+        <div className="lg:hidden mb-2">
+          <div className="flex items-center justify-between">
+            <div className="text-xs theme-text-muted">
+              {filteredOrders.length} orders
+              {searchQuery && ` for "${searchQuery}"`}
             </div>
+            <button
+              onClick={() => setMobileFiltersOpen(true)}
+              className="flex items-center gap-1 px-2 py-1 text-xs theme-border border rounded theme-surface theme-text hover:theme-hover transition-colors"
+            >
+              <Filter className="h-3 w-3" />
+              Filters
+              {getActiveFiltersCount() > 0 && (
+                <span className="bg-blue-600 text-white text-[10px] rounded-full h-3.5 w-3.5 flex items-center justify-center">
+                  {getActiveFiltersCount()}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile Filter Drawer - COMPACT */}
+        {mobileFiltersOpen && (
+          <div className="fixed inset-0 z-50 lg:hidden">
+            {/* Overlay */}
+            <div 
+              className="absolute inset-0 bg-black/50 backdrop-blur-xs"
+              onClick={() => setMobileFiltersOpen(false)}
+            />
+            
+            {/* Drawer */}
+            <div className="absolute right-0 top-0 h-full w-full max-w-xs theme-surface shadow-lg overflow-y-auto">
+              <div className="p-3">
+                {/* Header */}
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-base font-semibold theme-text">Filters</h2>
+                  <button
+                    onClick={() => setMobileFiltersOpen(false)}
+                    className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
+                  >
+                    <X className="h-4 w-4 theme-text" />
+                  </button>
+                </div>
+
+                {/* Clear All Button */}
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-medium theme-text text-sm">Active Filters</h3>
+                  <button
+                    onClick={clearFilters}
+                    className="text-xs text-blue-600 hover:opacity-80"
+                  >
+                    Clear All
+                  </button>
+                </div>
+
+                {/* Status Filter */}
+                <div className="mb-3">
+                  <h4 className="font-medium theme-text text-xs mb-1.5">Status</h4>
+                  <div className="flex flex-wrap gap-1">
+                    {STATUS_FILTERS.map((filter) => {
+                      const Icon = filter.icon;
+                      const isActive = statusFilter === filter.value;
+                      return (
+                        <button
+                          key={filter.value}
+                          onClick={() => setStatusFilter(filter.value)}
+                          className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all ${
+                            isActive
+                              ? 'bg-blue-600 text-white'
+                              : 'theme-border border theme-surface theme-text hover:theme-hover'
+                          }`}
+                        >
+                          <Icon className={`h-3 w-3 ${isActive ? 'text-white' : ''}`} />
+                          <span>{filter.label}</span>
+                          {filter.count > 0 && (
+                            <span className={`px-1 py-0.5 text-[10px] rounded ${
+                              isActive ? 'bg-white/20' : 'bg-gray-200 dark:bg-gray-700'
+                            }`}>
+                              {filter.count}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Date Range Filter */}
+                <div className="mb-3">
+                  <h4 className="font-medium theme-text text-xs mb-1.5">Date Range</h4>
+                  <select
+                    value={dateRange}
+                    onChange={(e) => setDateRange(e.target.value)}
+                    className="w-full px-2 py-1 text-sm theme-border border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 theme-surface theme-text"
+                  >
+                    {DATE_RANGES.map(range => (
+                      <option key={range.value} value={range.value}>{range.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Sort Options */}
+                <div className="mb-3">
+                  <h4 className="font-medium theme-text text-xs mb-1.5">Sort By</h4>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    className="w-full px-2 py-1 text-sm theme-border border rounded focus:outline-none focus:ring-1 focus:ring-purple-500 theme-surface theme-text"
+                  >
+                    {SORT_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Apply Button */}
+                <button
+                  onClick={() => setMobileFiltersOpen(false)}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-medium text-sm"
+                >
+                  Apply Filters
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Desktop Filters - COMPACT */}
+        <div className="hidden lg:block mb-3">
+          <div className="flex items-center justify-between">
+            {/* Status Filter Chips */}
+            <div className="flex flex-wrap gap-1">
+              {STATUS_FILTERS.map((filter) => {
+                const Icon = filter.icon;
+                const isActive = statusFilter === filter.value;
+                return (
+                  <button
+                    key={filter.value}
+                    onClick={() => setStatusFilter(filter.value)}
+                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all ${
+                      isActive
+                        ? 'bg-blue-600 text-white'
+                        : 'theme-border border theme-surface theme-text hover:theme-hover'
+                    }`}
+                  >
+                    <Icon className={`h-3 w-3 ${isActive ? 'text-white' : ''}`} />
+                    <span>{filter.label}</span>
+                    {filter.count > 0 && (
+                      <span className={`px-1 py-0.5 text-[10px] rounded ${
+                        isActive ? 'bg-white/20' : 'bg-gray-200 dark:bg-gray-700'
+                      }`}>
+                        {filter.count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Right Side Controls */}
+            <div className="flex items-center gap-2">
+              {/* Date Range */}
+              <select
+                value={dateRange}
+                onChange={(e) => setDateRange(e.target.value)}
+                className="px-2 py-1 text-xs theme-border border rounded theme-surface theme-text focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                {DATE_RANGES.map(range => (
+                  <option key={range.value} value={range.value}>{range.label}</option>
+                ))}
+              </select>
+
+              {/* Sort Options */}
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="px-2 py-1 text-xs theme-border border rounded theme-surface theme-text focus:outline-none focus:ring-1 focus:ring-purple-500"
+              >
+                {SORT_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Orders List */}
+        <div className="space-y-2">
+          {filteredOrders.length === 0 ? (
+            <EmptyState 
+              statusFilter={statusFilter}
+              searchQuery={searchQuery}
+              onClearFilters={clearFilters}
+            />
+          ) : (
+            filteredOrders.map((order) => (
+              <OrderCard
+                key={order._id}
+                order={order}
+                isExpanded={expandedOrder === order._id}
+                onToggleExpand={() => toggleOrderExpansion(order._id)}
+                onViewDetails={() => openOrderDetails(order)}
+                onConfirmDelivery={() => openConfirmModal(order)}
+                onCancelOrder={() => openCancelModal(order)}
+                onCopyOrderNumber={copyOrderNumber}
+                onShareOrder={shareOrder}
+                onViewImages={openImageGallery}
+                formatCurrency={formatCurrency}
+                formatDate={formatDate}
+                getStatusConfig={getStatusConfig}
+                getPaymentMethodIcon={getPaymentMethodIcon}
+                getPaymentMethodLabel={getPaymentMethodLabel}
+                handleImageError={handleImageError}
+                getProductImage={getProductImage}
+                getAllProductImages={getAllProductImages}
+              />
+            ))
+          )}
+        </div>
+
+        {/* No Orders State */}
+        {orders.length === 0 && !loading && (
+          <div className={`${themeClasses.card} rounded-lg border ${themeClasses.border} p-6 text-center mt-4`}>
+            <ShoppingCart className={`h-12 w-12 ${themeClasses['text-muted']} mx-auto mb-3`} />
+            <h3 className={`text-lg font-bold ${themeClasses.text} mb-1`}>No Orders Yet</h3>
+            <p className={`${themeClasses['text-muted']} text-sm mb-4`}>
+              You haven't placed any orders yet. Browse our products and make your first purchase!
+            </p>
+            <button
+              onClick={() => navigate('/products')}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors"
+            >
+              Start Shopping Now
+            </button>
           </div>
         )}
       </div>
@@ -573,7 +924,7 @@ const MyOrders = () => {
           onConfirm={handleConfirmDelivery}
           onClose={closeModals}
           isLoading={actionLoading}
-          themeClasses={themeClasses}
+          formatCurrency={formatCurrency}
         />
       )}
 
@@ -585,222 +936,251 @@ const MyOrders = () => {
           onConfirm={handleCancelOrder}
           onClose={closeModals}
           isLoading={actionLoading}
-          themeClasses={themeClasses}
+        />
+      )}
+
+      {showOrderDetails && (
+        <OrderDetailsModal
+          order={selectedOrder}
+          onClose={closeModals}
+          onViewImages={openImageGallery}
+          formatCurrency={formatCurrency}
+          formatDate={formatDate}
+          getStatusConfig={getStatusConfig}
+          getPaymentMethodIcon={getPaymentMethodIcon}
+          getPaymentMethodLabel={getPaymentMethodLabel}
+          handleImageError={handleImageError}
+          getProductImage={getProductImage}
+          getAllProductImages={getAllProductImages}
+          onCopyOrderNumber={copyOrderNumber}
+        />
+      )}
+
+      {showImageModal && (
+        <ImageGalleryModal
+          images={selectedProductImages}
+          currentIndex={currentImageIndex}
+          onNext={nextImage}
+          onPrev={prevImage}
+          onClose={() => setShowImageModal(false)}
+          handleImageError={handleImageError}
         />
       )}
     </div>
   );
 };
 
-// Sub-components for better composition
-const EmptyState = ({ statusFilter, ordersCount, currentFilter, themeClasses }) => {
-  const Icon = currentFilter.icon;
+// Sub-Components with Compact Design
+
+const EmptyState = ({ statusFilter, searchQuery, onClearFilters }) => {
+  const hasFilters = statusFilter !== 'all' || searchQuery;
   
   return (
-    <div className="text-center py-8">
-      <Icon className={`h-16 w-16 ${themeClasses.text.muted} mx-auto mb-4`} />
-      <h2 className={`text-lg font-bold ${themeClasses.text.primary} mb-2`}>
-        {ordersCount === 0 ? "No orders yet" : `No ${statusFilter} orders`}
-      </h2>
-      <p className={`${themeClasses.text.muted} text-sm mb-4 max-w-sm mx-auto`}>
-        {ordersCount === 0 
-          ? "You haven't placed any orders yet. Start shopping to see your orders here."
-          : `No orders match the "${currentFilter.label}" filter. Try selecting a different filter.`
+    <div className="theme-card rounded-lg border theme-border p-6 text-center">
+      <Package className="h-12 w-12 theme-text-muted mx-auto mb-3" />
+      <h3 className="text-lg font-bold theme-text mb-1">
+        {hasFilters ? 'No Matching Orders' : 'No Orders Found'}
+      </h3>
+      <p className="theme-text-muted text-sm mb-4">
+        {hasFilters 
+          ? 'No orders match your current filters.'
+          : 'You have not placed any orders yet.'
         }
       </p>
-      <Link
-        to="/products"
-        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium text-sm inline-block transition-colors"
-      >
-        Start Shopping
-      </Link>
+      {hasFilters && (
+        <button
+          onClick={onClearFilters}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors"
+        >
+          Clear Filters
+        </button>
+      )}
     </div>
   );
 };
 
 const OrderCard = ({ 
   order, 
+  isExpanded, 
+  onToggleExpand, 
+  onViewDetails, 
   onConfirmDelivery, 
-  onCancelOrder, 
+  onCancelOrder,
+  onCopyOrderNumber,
+  onShareOrder,
+  onViewImages,
   formatCurrency, 
-  formatDate, 
-  getStatusConfig, 
-  themeClasses,
-  getCurrentImage,
-  navigateImage,
-  imageIndex
+  formatDate,
+  getStatusConfig,
+  getPaymentMethodIcon,
+  getPaymentMethodLabel,
+  handleImageError,
+  getProductImage,
+  getAllProductImages
 }) => {
   const statusConfig = getStatusConfig(order.orderStatus);
   const StatusIcon = statusConfig.icon;
-  const currentImage = getCurrentImage(order);
-
-  // Calculate total images count
-  const totalImages = order.items?.reduce((total, item) => total + (item.images?.length || 0), 0) || 0;
+  const PaymentIcon = getPaymentMethodIcon(order.paymentMethod);
+  const totalItems = order.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0;
 
   return (
-    <div className={`${themeClasses.bg.secondary} rounded-lg border ${themeClasses.border} overflow-hidden transition-all hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-400 ocean:hover:border-blue-300`}>
-      
-      {/* Image Gallery Section */}
-      {totalImages > 0 && (
-        <div className="relative aspect-video bg-gray-100 overflow-hidden">
-          {currentImage ? (
-            <>
-              <img 
-                src={currentImage.url} 
-                alt={currentImage.productName}
-                className="w-full h-full object-cover"
-              />
-              
-              {/* Navigation Arrows */}
-              {totalImages > 1 && (
-                <>
-                  <button
-                    onClick={() => navigateImage(order._id, 'prev')}
-                    className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-full transition-all"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => navigateImage(order._id, 'next')}
-                    className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-full transition-all"
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                </>
-              )}
-              
-              {/* Image Counter */}
-              <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-50 text-white px-2 py-1 rounded-full text-xs">
-                {imageIndex + 1} / {totalImages}
+    <div className="theme-card rounded-lg border theme-border overflow-hidden transition-all hover:shadow-sm">
+      {/* Order Header - COMPACT */}
+      <div className="p-3 border-b theme-border">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <div className={`p-1 rounded ${statusConfig.bg}`}>
+                <StatusIcon className={`h-3.5 w-3.5 ${statusConfig.iconColor}`} />
               </div>
-            </>
-          ) : (
-            <div className="w-full h-full flex items-center justify-center bg-gray-200">
-              <Package className="h-12 w-12 text-gray-400" />
+              <h3 className="text-sm font-semibold theme-text truncate">
+                #{order.orderNumber || 'N/A'}
+              </h3>
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${statusConfig.color}`}>
+                {statusConfig.label}
+              </span>
             </div>
-          )}
+            
+            <div className="flex items-center gap-2 text-xs theme-text-muted">
+              <span>{totalItems} item{totalItems !== 1 ? 's' : ''}</span>
+              <span>•</span>
+              <span>{formatDate(order.createdAt)}</span>
+              <span>•</span>
+              <PaymentIcon className="h-3 w-3" />
+              <span className="text-xs">{getPaymentMethodLabel(order.paymentMethod)}</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-end gap-1">
+            <div className="text-right">
+              <p className="text-sm font-bold theme-text">
+                {formatCurrency(order.totalAmount)}
+              </p>
+            </div>
+            
+            <div className="flex items-center gap-1">
+              <button
+                onClick={onViewDetails}
+                className="p-1 hover:bg-blue-700 dark:hover:bg-blue-600 rounded transition-colors"
+                title="View Details"
+              >
+                <Eye className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={onToggleExpand}
+                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors"
+                title={isExpanded ? "Hide Items" : "Show Items"}
+              >
+                {isExpanded ? (
+                  <ChevronUp className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Expanded Items - COMPACT */}
+      {isExpanded && (
+        <div className="p-3 border-b border-border bg-surface">
+  <h4 className="text-xs font-medium text-text mb-2">Order Items</h4>
+  <div className="space-y-2">
+            {order.items?.map((item, index) => {
+              const productImages = getAllProductImages(item);
+              const mainImage = getProductImage(item);
+              const hasMultipleImages = productImages.length > 1;
+              
+              return (
+                <div key={index} className="flex items-center gap-2 p-2 bg-white dark:bg-gray-800 rounded">
+                  {/* Product Image with Gallery Button */}
+                  <div className="relative">
+                    <button
+                      onClick={() => onViewImages(item)}
+                      className="relative w-12 h-12 rounded border theme-border bg-white dark:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <img
+                        src={mainImage}
+                        alt={item.productName}
+                        className="w-full h-full object-contain p-0.5"
+                        onError={(e) => handleImageError(e, item)}
+                      />
+                      
+                      {hasMultipleImages && (
+                        <div className="absolute bottom-0 right-0 bg-black/70 text-white text-[10px] px-1 py-0.5 rounded-tl">
+                          {productImages.length}
+                        </div>
+                      )}
+                    </button>
+                  </div>
+                  
+                  {/* Product Info */}
+                  <div className="flex-1 min-w-0">
+                    <h5 className="text-sm font-medium theme-text truncate">{item.productName}</h5>
+                    <div className="flex items-center gap-2 text-xs theme-text-muted">
+                      <span>Qty: {item.quantity}</span>
+                      <span>×</span>
+                      <span>{formatCurrency(item.unitPrice)}</span>
+                    </div>
+                  </div>
+                  
+                  {/* Total Price */}
+                  <div className="text-right">
+                    <p className="text-sm font-semibold theme-text">{formatCurrency(item.totalPrice)}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
-      {/* Order Details */}
-      <div className="p-4">
-        {/* Order Header */}
-        <div className="flex flex-col gap-2 mb-3">
-          <div className="flex items-center justify-between">
-            <h3 className={`font-semibold ${themeClasses.text.primary} text-sm truncate`}>{order.orderNumber}</h3>
-            <span className={`px-2 py-1 rounded-full border text-xs font-medium ${statusConfig.color}`}>
-              <span className="flex items-center gap-1">
-                <StatusIcon className="h-3 w-3" />
-                {order.orderStatus.charAt(0).toUpperCase() + order.orderStatus.slice(1)}
-              </span>
-            </span>
+      {/* Action Buttons - COMPACT */}
+      <div className="p-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => onCopyOrderNumber(order.orderNumber)}
+              className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs transition-colors"
+              title="Copy Order Number"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => onShareOrder(order)}
+              className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs transition-colors"
+              title="Share Order"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+            </button>
           </div>
-          <div className={`flex items-center gap-2 text-xs ${themeClasses.text.muted}`}>
-            <Calendar className="h-3 w-3" />
-            {formatDate(order.createdAt)}
+
+          <div className="flex items-center gap-1">
+            {order.orderStatus === 'delivered' && (
+              <button
+                onClick={onConfirmDelivery}
+                className="flex items-center gap-1 px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition-colors"
+              >
+                <Check className="h-3 w-3" />
+                <span className="hidden sm:inline">Confirm</span>
+              </button>
+            )}
+            
+            {['pending', 'confirmed'].includes(order.orderStatus) && (
+              <button
+                onClick={onCancelOrder}
+                className="flex items-center gap-1 px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs transition-colors"
+              >
+                <X className="h-3 w-3" />
+                <span className="hidden sm:inline">Cancel</span>
+              </button>
+            )}
           </div>
         </div>
-
-        {/* Order Items */}
-        <div className={`border-t ${themeClasses.border} pt-3 mb-3`}>
-          <div className="space-y-2">
-            {order.items.map((item, index) => (
-              <div key={index} className="flex justify-between items-start text-sm">
-                <div className="flex-1 min-w-0">
-                  <p className={`font-medium ${themeClasses.text.primary} truncate`}>{item.productName}</p>
-                  <p className={`${themeClasses.text.muted} text-xs`}>
-                    Qty: {item.quantity} × {formatCurrency(item.unitPrice)}
-                  </p>
-                </div>
-                <p className={`font-medium ${themeClasses.text.primary} whitespace-nowrap ml-2`}>
-                  {formatCurrency(item.totalPrice)}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Order Summary */}
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between items-center">
-            <span className={themeClasses.text.muted}>Subtotal:</span>
-            <span className={themeClasses.text.primary}>{formatCurrency(order.totalAmount)}</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className={themeClasses.text.muted}>Payment method:</span>
-            <span className={`${themeClasses.text.primary} font-medium capitalize`}>
-              {order.paymentMethod?.replace(/([A-Z])/g, ' $1').trim() || 'Cash on Delivery'}
-            </span>
-          </div>
-          <div className="flex justify-between items-center font-semibold border-t pt-2">
-            <span className={themeClasses.text.primary}>Total:</span>
-            <span className={`text-lg ${themeClasses.text.primary}`}>{formatCurrency(order.totalAmount)}</span>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <OrderActions 
-          order={order}
-          onConfirmDelivery={onConfirmDelivery}
-          onCancelOrder={onCancelOrder}
-          themeClasses={themeClasses}
-        />
       </div>
     </div>
   );
-};
-
-const OrderActions = ({ order, onConfirmDelivery, onCancelOrder, themeClasses }) => {
-  if (order.orderStatus === 'pending') {
-    return (
-      <div className={`border-t ${themeClasses.border} pt-3 mt-3`}>
-        <button
-          onClick={() => onCancelOrder(order)}
-          className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition-colors w-full justify-center"
-        >
-          <X className="h-4 w-4" />
-          Cancel Order
-        </button>
-      </div>
-    );
-  }
-
-  if (order.orderStatus === 'delivered') {
-    return (
-      <div className={`border-t ${themeClasses.border} pt-3 mt-3`}>
-        <button
-          onClick={() => onConfirmDelivery(order)}
-          className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors w-full justify-center"
-        >
-          <Check className="h-4 w-4" />
-          Confirm Receipt
-        </button>
-      </div>
-    );
-  }
-
-  if (order.orderStatus === 'processing') {
-    return (
-      <div className={`border-t ${themeClasses.border} pt-3 mt-3`}>
-        <p className={`text-xs ${themeClasses.text.muted} text-center italic`}>
-          Your order is being processed by our team
-        </p>
-      </div>
-    );
-  }
-
-  if (order.orderStatus === 'confirmed') {
-    return (
-      <div className={`border-t ${themeClasses.border} pt-3 mt-3`}>
-        <p className="text-xs text-green-600 text-center italic flex items-center justify-center gap-2">
-          <CheckCircle className="h-4 w-4" />
-          Order completed - Thank you for your purchase!
-        </p>
-      </div>
-    );
-  }
-
-  return null;
 };
 
 const ConfirmDeliveryModal = ({ 
@@ -810,60 +1190,67 @@ const ConfirmDeliveryModal = ({
   onConfirm, 
   onClose, 
   isLoading,
-  themeClasses
+  formatCurrency
 }) => {
   return (
-    <ModalWrapper onClose={onClose} themeClasses={themeClasses}>
-      <div className="flex items-center gap-3 mb-4">
-        <div className="p-2 bg-green-100 rounded-lg">
-          <CheckCircle className="h-5 w-5 text-green-600" />
+    <ModalWrapper onClose={onClose} size="sm">
+      <div className="p-4">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="p-2 bg-green-100 dark:bg-green-900 rounded">
+            <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold theme-text">Confirm Delivery</h3>
+            <p className="text-xs theme-text-muted">Order #{order?.orderNumber}</p>
+          </div>
         </div>
-        <h3 className={`text-lg font-semibold ${themeClasses.text.primary}`}>Confirm Delivery</h3>
-      </div>
-      
-      <div className="mb-4">
-        <p className={`${themeClasses.text.secondary} text-sm mb-3`}>
-          Please confirm that you have received order <strong>{order?.orderNumber}</strong> and the products are as expected.
-        </p>
         
-        <label className={`block ${themeClasses.text.secondary} text-sm font-medium mb-2`}>
-          Confirmation Note *
-        </label>
-        <textarea
-          value={confirmationNote}
-          onChange={(e) => onConfirmationNoteChange(e.target.value)}
-          placeholder="Please confirm that you have received the products in good condition..."
-          className={`w-full p-3 border ${themeClasses.border} rounded-lg text-sm ${themeClasses.surface} ${themeClasses.text.primary} focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
-          rows="3"
-          required
-        />
-      </div>
+        <div className="mb-4">
+          <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded p-3 mb-3">
+            <p className="text-sm text-green-600 dark:text-green-300">
+              Please confirm that you have received all items in good condition.
+            </p>
+          </div>
+          
+          <label className="block text-sm font-medium theme-text mb-1">
+            Confirmation Note *
+          </label>
+          <textarea
+            value={confirmationNote}
+            onChange={(e) => onConfirmationNoteChange(e.target.value)}
+            placeholder="Confirm receipt of all items..."
+            className="w-full p-2 theme-border border rounded theme-surface theme-text focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
+            rows="2"
+            required
+          />
+        </div>
 
-      <div className="flex gap-3 justify-end">
-        <button
-          onClick={onClose}
-          className={`px-4 py-2 border ${themeClasses.border} rounded-lg ${themeClasses.text.secondary} ${themeClasses.hover} transition-colors text-sm`}
-          disabled={isLoading}
-        >
-          Cancel
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={!confirmationNote.trim() || isLoading}
-          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          {isLoading ? (
-            <>
-              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-              Confirming...
-            </>
-          ) : (
-            <>
-              <Check className="h-4 w-4" />
-              Confirm Receipt
-            </>
-          )}
-        </button>
+        <div className="flex gap-2 justify-end">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 theme-border border rounded text-sm hover:theme-hover transition-colors"
+            disabled={isLoading}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!confirmationNote.trim() || isLoading}
+            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+          >
+            {isLoading ? (
+              <>
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                Confirming...
+              </>
+            ) : (
+              <>
+                <Check className="h-3.5 w-3.5" />
+                Confirm
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </ModalWrapper>
   );
@@ -875,78 +1262,354 @@ const CancelOrderModal = ({
   onCancellationReasonChange, 
   onConfirm, 
   onClose, 
-  isLoading,
-  themeClasses
+  isLoading
 }) => {
   return (
-    <ModalWrapper onClose={onClose} themeClasses={themeClasses}>
-      <div className="flex items-center gap-3 mb-4">
-        <div className="p-2 bg-red-100 rounded-lg">
-          <AlertCircle className="h-5 w-5 text-red-600" />
+    <ModalWrapper onClose={onClose} size="sm">
+      <div className="p-4">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="p-2 bg-red-100 dark:bg-red-900 rounded">
+            <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold theme-text">Cancel Order</h3>
+            <p className="text-xs theme-text-muted">Order #{order?.orderNumber}</p>
+          </div>
         </div>
-        <h3 className={`text-lg font-semibold ${themeClasses.text.primary}`}>Cancel Order</h3>
-      </div>
-      
-      <div className="mb-4">
-        <p className={`${themeClasses.text.secondary} text-sm mb-3`}>
-          Are you sure you want to cancel order <strong>{order?.orderNumber}</strong>?
-        </p>
         
-        <label className={`block ${themeClasses.text.secondary} text-sm font-medium mb-2`}>
-          Reason for Cancellation *
-        </label>
-        <textarea
-          value={cancellationReason}
-          onChange={(e) => onCancellationReasonChange(e.target.value)}
-          placeholder="Please provide a reason for cancelling this order..."
-          className={`w-full p-3 border ${themeClasses.border} rounded-lg text-sm ${themeClasses.surface} ${themeClasses.text.primary} focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
-          rows="3"
-          required
-        />
-      </div>
+        <div className="mb-4">
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-3 mb-3">
+            <p className="text-sm text-red-600 dark:text-red-300">
+              Are you sure? This cannot be undone.
+            </p>
+          </div>
+          
+          <label className="block text-sm font-medium theme-text mb-1">
+            Reason *
+          </label>
+          <textarea
+            value={cancellationReason}
+            onChange={(e) => onCancellationReasonChange(e.target.value)}
+            placeholder="Why are you cancelling this order?"
+            className="w-full p-2 theme-border border rounded theme-surface theme-text focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
+            rows="2"
+            required
+          />
+        </div>
 
-      <div className="flex gap-3 justify-end">
-        <button
-          onClick={onClose}
-          className={`px-4 py-2 border ${themeClasses.border} rounded-lg ${themeClasses.text.secondary} ${themeClasses.hover} transition-colors text-sm`}
-          disabled={isLoading}
-        >
-          Keep Order
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={!cancellationReason.trim() || isLoading}
-          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          {isLoading ? (
-            <>
-              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-              Cancelling...
-            </>
-          ) : (
-            <>
-              <X className="h-4 w-4" />
-              Cancel Order
-            </>
-          )}
-        </button>
+        <div className="flex gap-2 justify-end">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 theme-border border rounded text-sm hover:theme-hover transition-colors"
+            disabled={isLoading}
+          >
+            Keep Order
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!cancellationReason.trim() || isLoading}
+            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+          >
+            {isLoading ? (
+              <>
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                Cancelling...
+              </>
+            ) : (
+              <>
+                <X className="h-3.5 w-3.5" />
+                Cancel
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </ModalWrapper>
   );
 };
 
-const ModalWrapper = ({ children, onClose, themeClasses }) => (
-  <div 
-    className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
-    onClick={onClose}
-  >
+const OrderDetailsModal = ({ 
+  order, 
+  onClose, 
+  onViewImages,
+  formatCurrency, 
+  formatDate,
+  getStatusConfig,
+  getPaymentMethodIcon,
+  getPaymentMethodLabel,
+  handleImageError,
+  getProductImage,
+  getAllProductImages,
+  onCopyOrderNumber
+}) => {
+  const statusConfig = getStatusConfig(order.orderStatus);
+  const StatusIcon = statusConfig.icon;
+  const PaymentIcon = getPaymentMethodIcon(order.paymentMethod);
+  const totalItems = order.items?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0;
+
+  return (
+    <ModalWrapper onClose={onClose} size="xl">
+      <div className="p-4">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded">
+              <Receipt className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold theme-text">Order Details</h3>
+              <p className="text-xs theme-text-muted">#{order.orderNumber || 'N/A'}</p>
+            </div>
+          </div>
+          <div className="flex gap-1">
+            <button
+              onClick={() => onCopyOrderNumber(order.orderNumber)}
+              className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
+              title="Copy Order Number"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Status Banner */}
+        <div className={`${statusConfig.bg} border ${statusConfig.color.split(' ')[2]} rounded p-3 mb-4`}>
+          <div className="flex items-center gap-2">
+            <StatusIcon className={`h-4 w-4 ${statusConfig.iconColor}`} />
+            <div className="flex-1">
+              <h4 className="text-sm font-medium theme-text">{statusConfig.label}</h4>
+              <p className="text-xs theme-text-muted">{statusConfig.description}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Order Items */}
+          <div className="lg:col-span-2">
+            <h4 className="text-sm font-semibold theme-text mb-2">Items ({totalItems})</h4>
+            <div className="space-y-2 mb-4">
+              {order.items?.map((item, index) => {
+                const productImages = getAllProductImages(item);
+                const mainImage = getProductImage(item);
+                
+                return (
+                  <div key={index} className="flex items-center gap-2 p-2 bg-gray-50 dark:bg-gray-800 rounded">
+                    <button
+                      onClick={() => onViewImages(item)}
+                      className="relative w-10 h-10 rounded border theme-border bg-white dark:bg-gray-700"
+                    >
+                      <img
+                        src={mainImage}
+                        alt={item.productName}
+                        className="w-full h-full object-contain p-0.5"
+                        onError={(e) => handleImageError(e, item)}
+                      />
+                      {productImages.length > 1 && (
+                        <div className="absolute -top-1 -right-1 bg-blue-600 text-white text-[10px] rounded-full h-4 w-4 flex items-center justify-center">
+                          {productImages.length}
+                        </div>
+                      )}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <h5 className="text-sm font-medium theme-text truncate">{item.productName}</h5>
+                      <div className="flex items-center gap-1 text-xs theme-text-muted">
+                        <span>Qty: {item.quantity}</span>
+                        <span>×</span>
+                        <span>{formatCurrency(item.unitPrice)}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-semibold theme-text">{formatCurrency(item.totalPrice)}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Order Timeline */}
+            <h4 className="text-sm font-semibold theme-text mb-2">Timeline</h4>
+            <div className="space-y-2">
+              {[
+                { label: 'Order Placed', date: order.createdAt, active: true },
+                { label: 'Confirmed', date: order.confirmedAt || order.updatedAt, active: order.orderStatus !== 'pending' },
+                { label: 'Processing', date: order.processingAt || order.updatedAt, active: ['processing', 'shipped', 'delivered', 'completed'].includes(order.orderStatus) },
+                { label: 'Delivered', date: order.deliveredAt || order.updatedAt, active: ['delivered', 'completed'].includes(order.orderStatus) }
+              ].map((step, index) => (
+                step.date && (
+                  <div key={index} className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${step.active ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
+                    <span className={`text-sm ${step.active ? 'theme-text font-medium' : 'theme-text-muted'}`}>
+                      {step.label}
+                    </span>
+                    <span className="text-xs theme-text-muted ml-auto">
+                      {formatDate(step.date)}
+                    </span>
+                  </div>
+                )
+              ))}
+            </div>
+          </div>
+
+          {/* Order Summary */}
+          <div>
+            <div className="theme-card border theme-border rounded p-3 mb-3">
+              <h4 className="text-sm font-semibold theme-text mb-2">Order Summary</h4>
+              <div className="space-y-1.5 text-sm">
+                <div className="flex justify-between">
+                  <span className="theme-text-muted">Subtotal</span>
+                  <span className="theme-text">{formatCurrency(order.subtotal || order.totalAmount)}</span>
+                </div>
+                {order.shippingFee > 0 && (
+                  <div className="flex justify-between">
+                    <span className="theme-text-muted">Shipping</span>
+                    <span className="theme-text">{formatCurrency(order.shippingFee)}</span>
+                  </div>
+                )}
+                <div className="border-t theme-border pt-1.5 mt-1.5">
+                  <div className="flex justify-between font-semibold">
+                    <span className="theme-text">Total</span>
+                    <span className="theme-text">{formatCurrency(order.totalAmount)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Payment Info */}
+            <div className="theme-card border theme-border rounded p-3 mb-3">
+              <h4 className="text-sm font-semibold theme-text mb-2">Payment</h4>
+              <div className="flex items-center gap-2">
+                <PaymentIcon className="h-4 w-4 theme-text-muted" />
+                <div>
+                  <p className="text-sm font-medium theme-text">
+                    {getPaymentMethodLabel(order.paymentMethod)}
+                  </p>
+                  <p className="text-xs theme-text-muted">
+                    Paid {formatDate(order.paidAt || order.createdAt, 'relative')}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Support */}
+            <div className="text-center">
+              <button
+                onClick={() => window.open(`https://wa.me/256751808507?text=Hi, I need help with order ${order.orderNumber}`, '_blank')}
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded text-sm transition-colors"
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                Contact Support
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Close Button */}
+        <div className="flex justify-end mt-4">
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded text-sm transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </ModalWrapper>
+  );
+};
+
+const ImageGalleryModal = ({ 
+  images, 
+  currentIndex, 
+  onNext, 
+  onPrev, 
+  onClose,
+  handleImageError
+}) => {
+  const currentImage = images[currentIndex] || '';
+  
+  return (
     <div 
-      className={`${themeClasses.surface} rounded-xl shadow-2xl border ${themeClasses.border} max-w-md w-full p-4 sm:p-6 mx-auto`}
-      onClick={(e) => e.stopPropagation()}
+      className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50"
+      onClick={onClose}
     >
-      {children}
+      <div 
+        className="relative w-full max-w-2xl max-h-[80vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Close button */}
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 z-10 p-2 bg-black/50 text-white rounded-full hover:bg-black/70"
+        >
+          <X className="h-5 w-5" />
+        </button>
+        
+        {/* Navigation buttons */}
+        {images.length > 1 && (
+          <>
+            <button
+              onClick={onPrev}
+              className="absolute left-4 top-1/2 transform -translate-y-1/2 z-10 p-2 bg-black/50 text-white rounded-full hover:bg-black/70"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <button
+              onClick={onNext}
+              className="absolute right-4 top-1/2 transform -translate-y-1/2 z-10 p-2 bg-black/50 text-white rounded-full hover:bg-black/70"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          </>
+        )}
+        
+        {/* Main image */}
+        <div className="w-full h-[60vh] flex items-center justify-center">
+          <img
+            src={currentImage}
+            alt={`Product image ${currentIndex + 1}`}
+            className="max-w-full max-h-full object-contain"
+            onError={(e) => handleImageError(e)}
+          />
+        </div>
+        
+        {/* Image counter */}
+        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/50 text-white px-3 py-1 rounded-full text-sm">
+          {currentIndex + 1} / {images.length}
+        </div>
+      </div>
     </div>
-  </div>
-);
+  );
+};
+
+const ModalWrapper = ({ children, onClose, size = 'md' }) => {
+  const sizeClasses = {
+    sm: 'max-w-sm',
+    md: 'max-w-md',
+    lg: 'max-w-lg',
+    xl: 'max-w-2xl'
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+      onClick={onClose}
+    >
+      <div 
+        className={`theme-surface rounded-lg shadow-xl border theme-border ${sizeClasses[size]} w-full max-h-[90vh] overflow-y-auto`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="sticky top-0 z-10 p-2 border-b theme-border bg-white dark:bg-gray-900 flex justify-end">
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
+          >
+            <X className="h-4 w-4 theme-text" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+};
 
 export default MyOrders;
